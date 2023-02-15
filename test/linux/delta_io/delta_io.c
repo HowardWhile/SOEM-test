@@ -29,16 +29,20 @@
 #define PERIOD_NS (1000000)
 #define NSEC_PER_SEC (1000000000)
 
-char IOmap[4096];
+boolean bg_cancel = 0;
 OSAL_THREAD_HANDLE thread1;
 OSAL_THREAD_HANDLE thread2;
+
+boolean dynamicY = FALSE;
+
+char IOmap[4096];
+boolean DO[32];
 
 int expectedWKC;
 boolean needlf;
 volatile int wkc;
 boolean inOP;
 uint8 currentgroup = 0;
-boolean bg_cancel = 0;
 
 static int sdo_write8(uint16 slave, uint16 index, uint8 subindex, uint8 value)
 {
@@ -102,28 +106,43 @@ int setupDeltaIO(void)
     }
 }
 
+void modifyBit(uint8 *value, int p, boolean bit)
+{
+    int mask = 1 << p;
+    *value = ((*value & ~mask) | (bit << p));
+}
+
 void cyclic_task()
 {
     static int cyc_count = 0;
 
-    //printf("[%ld]\r\n",clock_ms());
+    // printf("[%ld]\r\n",clock_ms());
 
-    if (cyc_count % 50 == 0)
+    if (dynamicY && cyc_count % 100 == 0)
     {
-        ec_slave[EC_SLAVE_ID].outputs[0] ^= 1;
-        //printf("Processdata cycle %4d, WKC %d , O:", cyc_count , wkc);
-        //printf(" T:%" PRId64 "\r\n", ec_DCtime);
+        for (size_t idx = 0; idx < 32; idx++)
+        {
+            DO[idx] = !DO[idx];
+        }
     }
-    cyc_count++;
+
+    for (size_t idx_bit = 0; idx_bit < 8; idx_bit++)
+    {
+        modifyBit(&ec_slave[EC_SLAVE_ID].outputs[0], idx_bit, DO[0 + idx_bit]);
+        modifyBit(&ec_slave[EC_SLAVE_ID].outputs[1], idx_bit, DO[8 + idx_bit]);
+        modifyBit(&ec_slave[EC_SLAVE_ID].outputs[2], idx_bit, DO[16 + idx_bit]);
+        modifyBit(&ec_slave[EC_SLAVE_ID].outputs[3], idx_bit, DO[24 + idx_bit]);
+    }
 
     ec_send_processdata();
     wkc = ec_receive_processdata(EC_TIMEOUTRET);
+    cyc_count++;
 
     //
     if (wkc >= expectedWKC)
     {
         // printf("Processdata cycle %4d, WKC %d , O:", cyc_count++, wkc);
-        
+
         // for (int j = 0; j < 4; j++)
         // {
         //     printf(" %2.2x", *(ec_slave[0].outputs + j));
@@ -157,6 +176,8 @@ void simpletest(char *ifname)
 
             while (setupDeltaIO())
                 usleep(100);
+
+            memset(DO, 0, sizeof(DO));
 
             ec_config_map(&IOmap);
             ec_configdc();
@@ -222,15 +243,15 @@ void simpletest(char *ifname)
                 // ----------------------------------------------------
                 // real-time 定時器
                 // ----------------------------------------------------
-                printf("[%ld ms] Starting RT task with dt=%u ns.\n",clock_ms(), PERIOD_NS);
+                printf("[%ld ms] Starting RT task with dt=%u ns.\n", clock_ms(), PERIOD_NS);
                 struct timespec wakeup_time;
                 if (clock_gettime(CLOCK_REALTIME, &wakeup_time) == -1) // 當前的精準時間
                 {
                     printf("clock_gettime failed\n");
                     return;
                 }
-                //wakeup_time.tv_sec += 1; /* start in future */
-                //wakeup_time.tv_nsec = 0;
+                // wakeup_time.tv_sec += 1; /* start in future */
+                // wakeup_time.tv_nsec = 0;
                 while (!bg_cancel)
                 {
                     // sleep直到指定的時間點
@@ -386,29 +407,31 @@ OSAL_THREAD_FUNC keyboard(void *ptr)
         switch (ch)
         {
         case '0':
-        ec_slave[EC_SLAVE_ID].outputs[0] ^= 1UL << 0;
+
+            dynamicY = !dynamicY;
             break;
         case '1':
-        ec_slave[EC_SLAVE_ID].outputs[0] ^= 1UL << 1;
+            DO[1] = !DO[1];
             break;
         case '2':
-        ec_slave[EC_SLAVE_ID].outputs[0] ^= 1UL << 2;
+            DO[2] = !DO[2];
             break;
         case '3':
-        ec_slave[EC_SLAVE_ID].outputs[0] ^= 1UL << 3;
+            DO[3] = !DO[3];
             break;
         case '4':
-        ec_slave[EC_SLAVE_ID].outputs[0] ^= 1UL << 4;
+            DO[4] = !DO[4];
             break;
 
         default:
             break;
         }
 
-        printf("[keyboard] press (%c)(%d)\r\n",ch,ch);
+        // printf("[keyboard] press (%c)(%d)\r\n", ch, ch);
     }
     endwin();
-    return;    
+    bg_cancel = 1;
+    return;
 }
 
 void signal_handler(int signum)
@@ -426,12 +449,15 @@ void signal_handler(int signum)
 int main(void)
 {
 
-    printf("SOEM (Simple Open EtherCAT Master)\nSimple test\n");
+    printf("SOEM (Simple Open EtherCAT Master)\ndelta io\n");
     /* create thread to handle slave error handling in OP */
     //      pthread_create( &thread1, NULL, (void *) &ecatcheck, (void*) &ctime);
+
     osal_thread_create(&thread1, 128000, &ecatcheck, (void *)&ctime);
+    osal_usleep(10000);
 
     osal_thread_create(&thread2, 128000, &keyboard, (void *)&ctime);
+    osal_usleep(10000);
 
     // 攔截 ctrl + C 事件
     struct sigaction sa;
