@@ -1,14 +1,3 @@
-/** \file
- * \brief Example code for Simple Open EtherCAT master
- *
- * Usage : simple_test [ifname1]
- * ifname is NIC interface, f.e. eth0
- *
- * This is a minimal test.
- *
- * (c)Arthur Ketels 2010 - 2011
- */
-
 #include <stdio.h>
 #include <string.h>
 #include <inttypes.h>
@@ -20,6 +9,7 @@
 #define EC_TIMEOUTMON 500
 
 #define ETH_CH_NAME "eno1"
+#define EC_SLAVE_ID 1
 
 char IOmap[4096];
 OSAL_THREAD_HANDLE thread1;
@@ -29,44 +19,64 @@ volatile int wkc;
 boolean inOP;
 uint8 currentgroup = 0;
 
-static int drive_write8(uint16 slave, uint16 index, uint8 subindex, uint8 value)
+static int sdo_write8(uint16 slave, uint16 index, uint8 subindex, uint8 value)
 {
-   int wkc;
-   wkc = ec_SDOwrite(slave, index, subindex, FALSE, sizeof(value), &value, EC_TIMEOUTRXM);
-   return wkc;
+   return ecx_SDOwrite(&ecx_context, slave, index, subindex, FALSE, sizeof(uint8), &value, EC_TIMEOUTRXM);
 }
 
-int delta_io_setup(ecx_contextt *context, uint16 slave)
+int setupDeltaIO(void)
+
 {
-   int wkc = 0;  
-   printf("[slave:%d %ld] DELTA RC-EC0902 setup\r\n", slave, (int64)context);
+   int slave = EC_SLAVE_ID;
+   int wkc = 0;
+   printf("[slave:%d] DELTA RC-EC0902 setup\r\n", slave);
 
-   // Index: 2001 Datatype: 002a Objectcode: 09 Name: Active DO Enable
-   // Sub: 00 Datatype: 0005 Bitlength: 0008 Obj.access: 0007 Name: SubIndex 000
-   //          Value :0x04 4
-   // Sub: 01 Datatype: 0005 Bitlength: 0008 Obj.access: 003f Name: Active Port2 DO CH0~7 Enable
-   //          Value :0x00 0
-   // Sub: 02 Datatype: 0005 Bitlength: 0008 Obj.access: 003f Name: Active Port2 DO CH8~15 Enable
-   //          Value :0x00 0
-   // Sub: 03 Datatype: 0005 Bitlength: 0008 Obj.access: 003f Name: Active Port3 DO CH0~7 Enable
-   //          Value :0x00 0
-   // Sub: 04 Datatype: 0005 Bitlength: 0008 Obj.access: 003f Name: Active Port3 DO CH8~15 Enable
-   //          Value :0x00 0
-   wkc += drive_write8(slave, 0x2001, 1, 0xFF);
-   wkc += drive_write8(slave, 0x2001, 2, 0xFF);
-   wkc += drive_write8(slave, 0x2001, 3, 0xFF);
-   wkc += drive_write8(slave, 0x2001, 4, 0xFF);
+   // Active all DO port ----------------------------------------------------------
+   // 此物件可以設定輸出通道是否允許變更(8 個輸出通道為一組)。0 代表不允許改變狀態，1 代表允許改變狀態。
+   //    Index: 2001 Datatype: 002a Objectcode: 09 Name: Active DO Enable
+   //    Sub: 00 Datatype: 0005 Bitlength: 0008 Obj.access: 0007 Name: SubIndex 000
+   //             Value :0x04 4
+   //    Sub: 01 Datatype: 0005 Bitlength: 0008 Obj.access: 003f Name: Active Port2 DO CH0~7 Enable
+   //             Value :0x00 0
+   //    Sub: 02 Datatype: 0005 Bitlength: 0008 Obj.access: 003f Name: Active Port2 DO CH8~15 Enable
+   //             Value :0x00 0
+   //    Sub: 03 Datatype: 0005 Bitlength: 0008 Obj.access: 003f Name: Active Port3 DO CH0~7 Enable
+   //             Value :0x00 0
+   //    Sub: 04 Datatype: 0005 Bitlength: 0008 Obj.access: 003f Name: Active Port3 DO CH8~15 Enable
+   //             Value :0x00 0
+   wkc += sdo_write8(EC_SLAVE_ID, 0x2001, 1, 0xFF);
+   wkc += sdo_write8(EC_SLAVE_ID, 0x2001, 2, 0xFF);
+   wkc += sdo_write8(EC_SLAVE_ID, 0x2001, 3, 0xFF);
+   wkc += sdo_write8(EC_SLAVE_ID, 0x2001, 4, 0xFF);
 
-   //strncpy(ec_slave[slave].name, "IO", EC_MAXNAME);
+   // Error Mode disable ----------------------------------------------------------
+   // 0 代表維持原本輸出值，1 代表參考Error Mode Output Value(6207h)的設定值。
+   //    Index: 6206 Datatype: 002a Objectcode: 09 Name: DO Error Mode Enable
+   //    Sub: 00 Datatype: 0005 Bitlength: 0008 Obj.access: 0007 Name: SubIndex 000
+   //             Value :0x04 4
+   //    Sub: 01 Datatype: 0005 Bitlength: 0008 Obj.access: 003f Name: Port2 DO Ch0~7 Error Mode Enable
+   //             Value :0xff 255
+   //    Sub: 02 Datatype: 0005 Bitlength: 0008 Obj.access: 003f Name: Port2 DO Ch8~15 Error Mode Enable
+   //             Value :0xff 255
+   //    Sub: 03 Datatype: 0005 Bitlength: 0008 Obj.access: 003f Name: Port3 DO Ch0~7 Error Mode Enable
+   //             Value :0xff 255
+   //    Sub: 04 Datatype: 0005 Bitlength: 0008 Obj.access: 003f Name: Port3 DO Ch8~15 Error Mode Enable
+   //             Value :0xff 255
+   wkc += sdo_write8(EC_SLAVE_ID, 0x6206, 1, 0x0);
+   wkc += sdo_write8(EC_SLAVE_ID, 0x6206, 2, 0x0);
+   wkc += sdo_write8(EC_SLAVE_ID, 0x6206, 3, 0x0);
+   wkc += sdo_write8(EC_SLAVE_ID, 0x6206, 4, 0x0);
 
-   if (wkc != 4)
+   // strncpy(ec_slave[slave].name, "IO", EC_MAXNAME);
+
+   if (wkc != 8)
    {
       printf("[slave:%d] setup failed\nwkc: %d\n", slave, wkc);
       return -1;
    }
    else
    {
-      printf("[slave:%d] setup succeed.\n", slave);
+      printf("[slave:%d] DELTA RC-EC0902 setup succeed.\r\n", slave);
       return 0;
    }
 }
@@ -80,7 +90,6 @@ void simpletest(char *ifname)
    uint64_t start_time = clock_ms();
 
    printf("Starting simple test\n");
-
 
    /* initialise SOEM, bind socket to ifname */
    if (ec_init(ifname))
@@ -96,13 +105,9 @@ void simpletest(char *ifname)
       {
          printf("%d slaves found and configured.\n", ec_slavecount);
 
-         
-         ec_slave[0].PO2SOconfigx = delta_io_setup;
-         
-         uint8 value = 0xFF;
-         ec_SDOwrite(1, 0x2001, 1, FALSE, sizeof(value), &value, EC_TIMEOUTRXM);
+         setupDeltaIO(); // initial io module
 
-         ec_config_map(&IOmap);         
+         ec_config_map(&IOmap);
          ec_configdc();
 
          printf("Slaves mapped, state to SAFE_OP.\n");
@@ -144,7 +149,7 @@ void simpletest(char *ifname)
             printf("Operational state reached for all slaves.\n");
             inOP = TRUE;
             /* cyclic loop */
-            for (i = 1; i <= 1000; i++)
+            for (i = 1; i <= 10000; i++)
             {
 
                static int blink = 0;
@@ -156,17 +161,14 @@ void simpletest(char *ifname)
                   for (j = 0; j < oloop; j++)
                   {
                      //*(ec_slave[0].outputs + j) = blink ? 0xFF : 0x00;
-                     ec_slave[0].outputs[j] = blink ? 0xFF : 0x00;
-                     
+                     ec_slave[0].outputs[j] = blink ? 0x01 : 0x00;
                   }
                   //*ec_slave[0].outputs = blink ? 0xFF : 0x00;
 
-                  //uint8 outputs = blink ? 0xFF : 0x00;
-                  //ec_SDOwrite(0, 0x6200, 0x01, FALSE, sizeof(uint8), &outputs, EC_TIMEOUTRXM);
-                  
+                  // uint8 outputs = blink ? 0xFF : 0x00;
+                  // ec_SDOwrite(0, 0x6200, 0x01, FALSE, sizeof(uint8), &outputs, EC_TIMEOUTRXM);
 
                   start_time = clock_ms();
-
                }
 
                ec_send_processdata();
@@ -189,8 +191,7 @@ void simpletest(char *ifname)
                   printf(" T:%" PRId64 "\r", ec_DCtime);
                   needlf = TRUE;
                }
-               osal_usleep(5000);
-
+               osal_usleep(100);
             }
             inOP = FALSE;
          }
@@ -303,7 +304,7 @@ OSAL_THREAD_FUNC ecatcheck(void *ptr)
    }
 }
 
-//int main(int argc, char *argv[])
+// int main(int argc, char *argv[])
 int main(void)
 {
 
