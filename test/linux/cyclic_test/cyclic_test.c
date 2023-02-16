@@ -19,14 +19,6 @@
 #include "ethercat.h"
 #include "arc_console.hpp"
 
-#define EC_TIMEOUTMON 500
-
-// 通訊用的eth設備名稱
-#define ETH_CH_NAME "enp2s0"
-
-// Slave的站號
-#define EC_SLAVE_ID 1
-
 // RT Loop的週期
 #define PERIOD_NS (1000000) // 1k hz
 //#define PERIOD_NS (100000) // 10k hz
@@ -34,25 +26,13 @@
 
 boolean bg_cancel = 0;
 OSAL_THREAD_HANDLE thread1;
-OSAL_THREAD_HANDLE thread2;
-
-boolean dynamicY = FALSE;
-
-char IOmap[4096];
-boolean DO[32];
-
-int expectedWKC;
-boolean needlf;
-volatile int wkc;
-boolean inOP;
-uint8 currentgroup = 0;
+OSAL_THREAD_HANDLE bg_keyboard;
 
 int64 last_cktime = 0;
 int64 max_dt = LLONG_MIN;
 int64 min_dt = LLONG_MAX;
 int64 sum_dt = 0;
 int64 cyc_count = 0;
-
 
 void cyclic_task()
 {  
@@ -73,7 +53,7 @@ void cyclic_task()
     // 顯示
     EXEC_INTERVAL(100)
     {
-        console("cyc_count: %ld, (min, max, avg)us = (%ld, %ld, %.2f) T:%ld ****",
+        console("cyc_count: %ld, (min, max, avg)us = (%ld, %ld, %.2f) T:%ldns ****",
                  cyc_count,
                  min_dt / 1000, max_dt / 1000, (double)sum_dt / cyc_count / 1000,
                  dc_time);
@@ -84,11 +64,7 @@ void cyclic_task()
 OSAL_THREAD_FUNC keyboard(void *ptr)
 {
     (void)ptr; /* Not used */
-
     int ch;
-    initscr();
-    noecho();
-
     while (ch != 'q')
     {
         ch = getch();
@@ -109,7 +85,6 @@ OSAL_THREAD_FUNC keyboard(void *ptr)
 
         // printf("[keyboard] press (%c) (%d)\r\r\n", ch, ch);
     }
-    endwin();
     bg_cancel = 1;
     return;
 }
@@ -148,10 +123,7 @@ int main(void)
 {
     initscr();
     noecho();
-
-    osal_thread_create(&thread2, 128000, &keyboard, (void *)&ctime);
-
-
+    osal_thread_create(&bg_keyboard, 1024, &keyboard, (void *)&ctime);
     // 攔截 ctrl + C 事件
     struct sigaction sa;
     sa.sa_handler = signal_handler;
@@ -183,6 +155,7 @@ int main(void)
     clock_gettime(CLOCK_MONOTONIC, &wakeup_time);
     wakeup_time.tv_nsec += PERIOD_NS;
 
+    last_cktime = clock_ns();
     while (!bg_cancel)
     {
         //console_fps("loop");
