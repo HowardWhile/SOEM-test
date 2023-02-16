@@ -22,7 +22,7 @@
 #define EC_TIMEOUTMON 500
 
 // 通訊用的eth設備名稱
-#define ETH_CH_NAME "eno1"
+#define ETH_CH_NAME "enp2s0"
 
 // Slave的站號
 #define EC_SLAVE_ID 1
@@ -128,7 +128,7 @@ boolean getBit(uint8 *value, int p)
 void cyclic_task()
 {
     // 開關所有的Y
-    if (dynamicY && cyc_count % 100 == 0)
+    if (dynamicY && cyc_count % 10 == 0)
     {
         for (size_t idx = 0; idx < 32; idx++)
         {
