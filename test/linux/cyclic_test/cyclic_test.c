@@ -158,20 +158,20 @@ int main(void)
     if (setpriority(PRIO_PROCESS, pid, -19))                                // 設置進程優先順序
         printf("Warning: Failed to set priority: %s\r\n", strerror(errno)); // 錯誤還是可以跑
 
+    struct timespec wakeup_time;
+    
+    printf("Starting RT task with dt=%u ns.\r\n", PERIOD_NS);
+    clock_gettime(CLOCK_MONOTONIC, &wakeup_time);
+    wakeup_time.tv_sec += 1; /* start in future */
+    wakeup_time.tv_nsec = 0;
+
     while (!bg_cancel)
     {
-        struct timespec wakeup_time;
-
-        // sleep直到指定的時間點
+        //console_fps("loop");
         int ret = clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &wakeup_time, NULL);
         if (ret)
         {
-            // sleep錯誤處理
-            printf("clock_nanosleep(): %s\r\n", strerror(ret));
-            if (ret == EINTR)
-                printf("Interrupted by signal handler\r\n");
-            else
-                printf("clock_nanosleep");
+            printf("clock_nanosleep(): %s\n", strerror(ret));
             break;
         }
 
@@ -180,20 +180,16 @@ int main(void)
         {
             rt_check_time = clock_ms();
             // --------------------------------------------
-            // console_fps("cyclic_task");
             cyclic_task();
             // --------------------------------------------
         }
 
-        // 指定下次睡醒的時間點
         wakeup_time.tv_nsec += PERIOD_NS;
-        while (wakeup_time.tv_nsec >= NSEC_PER_SEC)
-        {
+        while (wakeup_time.tv_nsec >= NSEC_PER_SEC) {
             wakeup_time.tv_nsec -= NSEC_PER_SEC;
             wakeup_time.tv_sec++;
         }
     }
-
 
     printf("End program\r\n");
     endwin();
