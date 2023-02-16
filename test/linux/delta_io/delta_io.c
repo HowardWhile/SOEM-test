@@ -12,7 +12,9 @@
 #include <unistd.h>
 #include <sys/resource.h>
 
+// keyboard
 #include <curses.h>
+#include <ctype.h>
 
 #include "ethercat.h"
 #include "arc_console.hpp"
@@ -96,7 +98,7 @@ int setupDeltaIO(void)
 
     if (wkc != 8)
     {
-        printf("[slave:%d] setup failed\nwkc: %d\n", slave, wkc);
+        printf("[slave:%d] setup failed\r\nwkc: %d\r\n", slave, wkc);
         return -1;
     }
     else
@@ -110,6 +112,11 @@ void modifyBit(uint8 *value, int p, boolean bit)
 {
     int mask = 1 << p;
     *value = ((*value & ~mask) | (bit << p));
+}
+
+boolean getBit(uint8 *value, int p)
+{
+    return (*value >> p) & 1;
 }
 
 void cyclic_task()
@@ -126,12 +133,15 @@ void cyclic_task()
         }
     }
 
+    // ------------------------------------
+    // update output
+    // ------------------------------------
     for (size_t idx_bit = 0; idx_bit < 8; idx_bit++)
     {
-        modifyBit(&ec_slave[EC_SLAVE_ID].outputs[0], idx_bit, DO[0 + idx_bit]);
-        modifyBit(&ec_slave[EC_SLAVE_ID].outputs[1], idx_bit, DO[8 + idx_bit]);
-        modifyBit(&ec_slave[EC_SLAVE_ID].outputs[2], idx_bit, DO[16 + idx_bit]);
-        modifyBit(&ec_slave[EC_SLAVE_ID].outputs[3], idx_bit, DO[24 + idx_bit]);
+        modifyBit(&ec_slave[EC_SLAVE_ID].outputs[0], idx_bit, DO[0 * 8 + idx_bit]);
+        modifyBit(&ec_slave[EC_SLAVE_ID].outputs[1], idx_bit, DO[1 * 8 + idx_bit]);
+        modifyBit(&ec_slave[EC_SLAVE_ID].outputs[2], idx_bit, DO[2 * 8 + idx_bit]);
+        modifyBit(&ec_slave[EC_SLAVE_ID].outputs[3], idx_bit, DO[3 * 8 + idx_bit]);
     }
 
     ec_send_processdata();
@@ -164,15 +174,15 @@ void simpletest(char *ifname)
     needlf = FALSE;
     inOP = FALSE;
 
-    printf("Starting simple test\n");
+    printf("Starting simple test\r\n");
     /* initialise SOEM, bind socket to ifname */
     if (ec_init(ifname))
     {
-        printf("ec_init on %s succeeded.\n", ifname);
+        printf("ec_init on %s succeeded.\r\n", ifname);
         /* find and auto-config slaves */
         if (ec_config_init(FALSE) > 0)
         {
-            printf("%d slaves found and configured.\n", ec_slavecount);
+            printf("%d slaves found and configured.\r\n", ec_slavecount);
 
             while (setupDeltaIO())
                 usleep(100);
@@ -182,7 +192,7 @@ void simpletest(char *ifname)
             ec_config_map(&IOmap);
             ec_configdc();
 
-            printf("Slaves mapped, state to SAFE_OP.\n");
+            printf("Slaves mapped, state to SAFE_OP.\r\n");
             /* wait for all slaves to reach SAFE_OP state */
             ec_statecheck(0, EC_STATE_SAFE_OP, EC_TIMEOUTSTATE * 4);
 
@@ -197,11 +207,11 @@ void simpletest(char *ifname)
             if (iloop > 8)
                 iloop = 8;
 
-            printf("segments : %d : %d %d %d %d\n", ec_group[0].nsegments, ec_group[0].IOsegment[0], ec_group[0].IOsegment[1], ec_group[0].IOsegment[2], ec_group[0].IOsegment[3]);
+            printf("segments : %d : %d %d %d %d\r\n", ec_group[0].nsegments, ec_group[0].IOsegment[0], ec_group[0].IOsegment[1], ec_group[0].IOsegment[2], ec_group[0].IOsegment[3]);
 
-            printf("Request operational state for all slaves\n");
+            printf("Request operational state for all slaves\r\n");
             expectedWKC = (ec_group[0].outputsWKC * 2) + ec_group[0].inputsWKC;
-            printf("Calculated workcounter %d\n", expectedWKC);
+            printf("Calculated workcounter %d\r\n", expectedWKC);
             ec_slave[0].state = EC_STATE_OPERATIONAL;
             /* send one valid process data to make outputs in slaves happy*/
             ec_send_processdata();
@@ -221,14 +231,13 @@ void simpletest(char *ifname)
 
             if (ec_slave[0].state == EC_STATE_OPERATIONAL)
             {
-                printf("Operational state reached for all slaves.\n");
+                printf("Operational state reached for all slaves.\r\n");
                 inOP = TRUE;
-
                 // ----------------------------------------------------
                 // 設定程式的兩種優先權
                 // ----------------------------------------------------
                 // Set PR (Priority) to RT(-99) 最高優先權
-                printf("Set priority ...\n");
+                printf("Set priority ...\r\n");
                 struct sched_param param = {};
                 param.sched_priority = sched_get_priority_max(SCHED_FIFO);
                 printf("Using priority %i.", param.sched_priority);
@@ -238,16 +247,17 @@ void simpletest(char *ifname)
                 // Set NI (Niceness) to -19 最高優先權
                 pid_t pid = getpid(); // 獲得進程PID
                 printf("PID = %d\r\n", pid);
-                if (setpriority(PRIO_PROCESS, pid, -19))                              // 設置進程優先順序
-                    printf("Warning: Failed to set priority: %s\n", strerror(errno)); // 錯誤還是可以跑
+                if (setpriority(PRIO_PROCESS, pid, -19))                                // 設置進程優先順序
+                    printf("Warning: Failed to set priority: %s\r\n", strerror(errno)); // 錯誤還是可以跑
+
                 // ----------------------------------------------------
                 // real-time 定時器
                 // ----------------------------------------------------
-                printf("[%ld ms] Starting RT task with dt=%u ns.\n", clock_ms(), PERIOD_NS);
+                printf("[%ld ms] Starting RT task with dt=%u ns.\r\n", clock_ms(), PERIOD_NS);
                 struct timespec wakeup_time;
                 if (clock_gettime(CLOCK_REALTIME, &wakeup_time) == -1) // 當前的精準時間
                 {
-                    printf("clock_gettime failed\n");
+                    printf("clock_gettime failed\r\n");
                     return;
                 }
                 // wakeup_time.tv_sec += 1; /* start in future */
@@ -259,9 +269,9 @@ void simpletest(char *ifname)
                     if (ret)
                     {
                         // sleep錯誤處理
-                        printf("clock_nanosleep(): %s\n", strerror(ret));
+                        printf("clock_nanosleep(): %s\r\n", strerror(ret));
                         if (ret == EINTR)
-                            printf("Interrupted by signal handler\n");
+                            printf("Interrupted by signal handler\r\n");
                         else
                             printf("clock_nanosleep");
                         break;
@@ -284,33 +294,33 @@ void simpletest(char *ifname)
             }
             else
             {
-                printf("Not all slaves reached operational state.\n");
+                printf("Not all slaves reached operational state.\r\n");
                 ec_readstate();
                 for (i = 1; i <= ec_slavecount; i++)
                 {
                     if (ec_slave[i].state != EC_STATE_OPERATIONAL)
                     {
-                        printf("Slave %d State=0x%2.2x StatusCode=0x%4.4x : %s\n",
+                        printf("Slave %d State=0x%2.2x StatusCode=0x%4.4x : %s\r\n",
                                i, ec_slave[i].state, ec_slave[i].ALstatuscode, ec_ALstatuscode2string(ec_slave[i].ALstatuscode));
                     }
                 }
             }
-            printf("\nRequest init state for all slaves\n");
+            printf("\r\nRequest init state for all slaves\r\n");
             ec_slave[0].state = EC_STATE_INIT;
             /* request INIT state for all slaves */
             ec_writestate(0);
         }
         else
         {
-            printf("No slaves found!\n");
+            printf("No slaves found!\r\n");
         }
-        printf("End simple test, close socket\n");
+        printf("End simple test, close socket\r\n");
         /* stop SOEM, close socket */
         ec_close();
     }
     else
     {
-        printf("No socket connection on %s\nExcecute as root\n", ifname);
+        printf("No socket connection on %s\r\nExcecute as root\r\n", ifname);
     }
 }
 
@@ -326,7 +336,7 @@ OSAL_THREAD_FUNC ecatcheck(void *ptr)
             if (needlf)
             {
                 needlf = FALSE;
-                printf("\n");
+                printf("\r\n");
             }
             /* one ore more slaves are not responding */
             ec_group[currentgroup].docheckstate = FALSE;
@@ -338,13 +348,13 @@ OSAL_THREAD_FUNC ecatcheck(void *ptr)
                     ec_group[currentgroup].docheckstate = TRUE;
                     if (ec_slave[slave].state == (EC_STATE_SAFE_OP + EC_STATE_ERROR))
                     {
-                        printf("ERROR : slave %d is in SAFE_OP + ERROR, attempting ack.\n", slave);
+                        printf("ERROR : slave %d is in SAFE_OP + ERROR, attempting ack.\r\n", slave);
                         ec_slave[slave].state = (EC_STATE_SAFE_OP + EC_STATE_ACK);
                         ec_writestate(slave);
                     }
                     else if (ec_slave[slave].state == EC_STATE_SAFE_OP)
                     {
-                        printf("WARNING : slave %d is in SAFE_OP, change to OPERATIONAL.\n", slave);
+                        printf("WARNING : slave %d is in SAFE_OP, change to OPERATIONAL.\r\n", slave);
                         ec_slave[slave].state = EC_STATE_OPERATIONAL;
                         ec_writestate(slave);
                     }
@@ -353,7 +363,7 @@ OSAL_THREAD_FUNC ecatcheck(void *ptr)
                         if (ec_reconfig_slave(slave, EC_TIMEOUTMON))
                         {
                             ec_slave[slave].islost = FALSE;
-                            printf("MESSAGE : slave %d reconfigured\n", slave);
+                            printf("MESSAGE : slave %d reconfigured\r\n", slave);
                         }
                     }
                     else if (!ec_slave[slave].islost)
@@ -363,7 +373,7 @@ OSAL_THREAD_FUNC ecatcheck(void *ptr)
                         if (ec_slave[slave].state == EC_STATE_NONE)
                         {
                             ec_slave[slave].islost = TRUE;
-                            printf("ERROR : slave %d lost\n", slave);
+                            printf("ERROR : slave %d lost\r\n", slave);
                         }
                     }
                 }
@@ -374,23 +384,23 @@ OSAL_THREAD_FUNC ecatcheck(void *ptr)
                         if (ec_recover_slave(slave, EC_TIMEOUTMON))
                         {
                             ec_slave[slave].islost = FALSE;
-                            printf("MESSAGE : slave %d recovered\n", slave);
+                            printf("MESSAGE : slave %d recovered\r\n", slave);
                         }
                     }
                     else
                     {
                         ec_slave[slave].islost = FALSE;
-                        printf("MESSAGE : slave %d found\n", slave);
+                        printf("MESSAGE : slave %d found\r\n", slave);
                     }
                 }
             }
             if (!ec_group[currentgroup].docheckstate)
-                printf("OK : all slaves resumed OPERATIONAL.\n");
+                printf("OK : all slaves resumed OPERATIONAL.\r\n");
         }
         osal_usleep(10000);
     }
 
-    printf("exit ecatcheck\r\n");
+    printf("exit ecatcheck\r\r\n");
 }
 
 OSAL_THREAD_FUNC keyboard(void *ptr)
@@ -404,30 +414,24 @@ OSAL_THREAD_FUNC keyboard(void *ptr)
     while (ch != 'q')
     {
         ch = getch();
+
+        if (isdigit(ch))
+        {
+            int idx = ch - '0';
+            DO[idx] = !DO[idx];
+        }
+
         switch (ch)
         {
-        case '0':
-
+        case ' ':
             dynamicY = !dynamicY;
-            break;
-        case '1':
-            DO[1] = !DO[1];
-            break;
-        case '2':
-            DO[2] = !DO[2];
-            break;
-        case '3':
-            DO[3] = !DO[3];
-            break;
-        case '4':
-            DO[4] = !DO[4];
             break;
 
         default:
             break;
         }
 
-        // printf("[keyboard] press (%c)(%d)\r\n", ch, ch);
+        // printf("[keyboard] press (%c) (%d)\r\r\n", ch, ch);
     }
     endwin();
     bg_cancel = 1;
@@ -437,10 +441,10 @@ OSAL_THREAD_FUNC keyboard(void *ptr)
 void signal_handler(int signum)
 {
     // 用來攔截 Ctrl + C 訊號
-    printf("signal_handler: caught signal %d\n", signum);
+    printf("signal_handler: caught signal %d\r\n", signum);
     if (signum == SIGINT)
     {
-        printf("[ctrl + c] ethercat release\n");
+        printf("[ctrl + c] ethercat release\r\n");
         bg_cancel = 1;
     }
 }
@@ -448,16 +452,15 @@ void signal_handler(int signum)
 // int main(int argc, char *argv[])
 int main(void)
 {
+    initscr();
+    noecho();
 
-    printf("SOEM (Simple Open EtherCAT Master)\ndelta io\n");
+    printw("SOEM (Simple Open EtherCAT Master)\r\ndelta io\r\n");
     /* create thread to handle slave error handling in OP */
     //      pthread_create( &thread1, NULL, (void *) &ecatcheck, (void*) &ctime);
 
     osal_thread_create(&thread1, 128000, &ecatcheck, (void *)&ctime);
-    osal_usleep(10000);
-
     osal_thread_create(&thread2, 128000, &keyboard, (void *)&ctime);
-    osal_usleep(10000);
 
     // 攔截 ctrl + C 事件
     struct sigaction sa;
@@ -465,11 +468,12 @@ int main(void)
     sigemptyset(&sa.sa_mask);
     sa.sa_flags = 0;
     if (sigaction(SIGINT, &sa, NULL) == -1)
-        printf("Failed to caught signal\n");
+        printf("Failed to caught signal\r\n");
 
     /* start cyclic part */
     simpletest(ETH_CH_NAME);
 
-    printf("End program\n");
+    printf("End program\r\n");
+
     return (0);
 }
