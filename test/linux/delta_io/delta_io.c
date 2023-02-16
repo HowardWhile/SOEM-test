@@ -28,7 +28,7 @@
 #define EC_SLAVE_ID 1
 
 // RT Loop的週期
-#define PERIOD_NS (1000000)
+#define PERIOD_NS (100000)
 #define NSEC_PER_SEC (1000000000)
 
 boolean bg_cancel = 0;
@@ -45,6 +45,12 @@ boolean needlf;
 volatile int wkc;
 boolean inOP;
 uint8 currentgroup = 0;
+
+int64 last_cktime = 0;
+int64 max_dt = LLONG_MIN;
+int64 min_dt = LLONG_MAX;
+int64 sum_dt = 0;
+int64 cyc_count = 0;
 
 static int sdo_write8(uint16 slave, uint16 index, uint8 subindex, uint8 value)
 {
@@ -121,10 +127,7 @@ boolean getBit(uint8 *value, int p)
 
 void cyclic_task()
 {
-    static int cyc_count = 0;
-
-    // printf("[%ld]\r\n",clock_ms());
-
+    // 開關所有的Y
     if (dynamicY && cyc_count % 100 == 0)
     {
         for (size_t idx = 0; idx < 32; idx++)
@@ -146,12 +149,34 @@ void cyclic_task()
 
     ec_send_processdata();
     wkc = ec_receive_processdata(EC_TIMEOUTRET);
-    cyc_count++;
 
-    //
+    int64 dc_time = ec_DCtime;
+    //int64 dc_time = clock_ns();
+    int64 dt = dc_time - last_cktime;
+    cyc_count++;
+    sum_dt += dt;
+
+    if (dt < min_dt)
+        min_dt = dt;
+
+    if (dt > max_dt)
+        max_dt = dt;
+
+    last_cktime = dc_time;
+
+    // 顯示
+    EXEC_INTERVAL(100)
+    {
+        consoler("cyc_count: %ld, (min, max, avg)us = (%ld, %ld, %.2f) T:%ld ****",
+                cyc_count,
+                min_dt / 1000, max_dt / 1000, (double)sum_dt / cyc_count / 1000,
+                dc_time);
+    }
+    EXEC_INTERVAL_END
+
     if (wkc >= expectedWKC)
     {
-        // printf("Processdata cycle %4d, WKC %d , O:", cyc_count++, wkc);
+        // printf("\t\tProcessdata cycle %4d, WKC %d , O:", cyc_count++, wkc);
 
         // for (int j = 0; j < 4; j++)
         // {
@@ -260,8 +285,12 @@ void simpletest(char *ifname)
                     printf("clock_gettime failed\r\n");
                     return;
                 }
+
                 // wakeup_time.tv_sec += 1; /* start in future */
                 // wakeup_time.tv_nsec = 0;
+
+                // 初始統計時間
+                last_cktime = ec_DCtime;
                 while (!bg_cancel)
                 {
                     // sleep直到指定的時間點
@@ -277,10 +306,15 @@ void simpletest(char *ifname)
                         break;
                     }
 
-                    // --------------------------------------------
-                    console_fps("cyclic_task");
-                    cyclic_task();
-                    // --------------------------------------------
+                    static int64 rt_check_time = 0;
+                    if (rt_check_time != clock_ms())
+                    {
+                        rt_check_time = clock_ms();
+                        // --------------------------------------------
+                        //console_fps("cyclic_task");
+                        cyclic_task();
+                        // --------------------------------------------
+                    }
 
                     // 指定下次睡醒的時間點
                     wakeup_time.tv_nsec += PERIOD_NS;
@@ -426,6 +460,12 @@ OSAL_THREAD_FUNC keyboard(void *ptr)
         case ' ':
             dynamicY = !dynamicY;
             break;
+        case 'r':
+            max_dt = LLONG_MIN;
+            min_dt = LLONG_MAX;
+            sum_dt = 0;
+            cyc_count = 0;
+            break;
 
         default:
             break;
@@ -470,10 +510,12 @@ int main(void)
     if (sigaction(SIGINT, &sa, NULL) == -1)
         printf("Failed to caught signal\r\n");
 
+
     /* start cyclic part */
     simpletest(ETH_CH_NAME);
 
     printf("End program\r\n");
+    endwin();
 
     return (0);
 }

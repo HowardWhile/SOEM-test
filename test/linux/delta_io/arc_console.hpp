@@ -11,16 +11,27 @@
 #define PRINT_FUNCTION printf
 
 #ifdef _SYS_TIME_H // linux #include <sys/time.h>
-static uint64_t clock_ms()
+int64_t clock_ms()
 {
     // https://stackoverflow.com/questions/3756323/how-to-get-the-current-time-in-milliseconds-from-c-in-linux
     struct timeval te;
     // get current time
     gettimeofday(&te, NULL);
     // calculate milliseconds
-    uint64_t milliseconds = te.tv_sec * 1000LL + te.tv_usec / 1000;
+    int64_t msec = te.tv_sec * 1000LL + te.tv_usec / 1000;
     // printf("milliseconds: %lld\n", milliseconds);
-    return milliseconds;
+    return msec;
+}
+int64_t clock_ns()
+{
+    // https://stackoverflow.com/questions/3756323/how-to-get-the-current-time-in-milliseconds-from-c-in-linux
+    struct timeval te;
+    // get current time
+    gettimeofday(&te, NULL);
+    // calculate milliseconds
+    int64_t usec = te.tv_sec * 1000000000LL + te.tv_usec*1000;
+    // printf("milliseconds: %lld\n", milliseconds);
+    return usec;
 }
 #define CLOCK_MS_FUNCTION clock_ms
 
@@ -34,24 +45,24 @@ static uint64_t clock_ms()
 /*//#define DBG_PRINT(...)  // 關閉輸出
 #define DBG_PRINT(...) console(__VA_ARGS__)
 {
-	DBG_PRINT("HelloWorld");
+    DBG_PRINT("HelloWorld");
 }*/
 
 // 範例2: debug 打印包含標籤
 /*#define DBG_PRINT(...) console_tag("DEBUG", __VA_ARGS__)
 {
-	DBG_PRINT("HelloWorld"); 
+    DBG_PRINT("HelloWorld");
 }*/
 /* ----------------------------- */
 // 名稱: EXEC_INTERVAL
 // 功能: 與EXEC_INTERVAL_END成對週期執行
 // 範例:
 /*	EXEC_INTERVAL(1000)
-*	{
-*		printf("clock() = %d \r\n", clock());
-*	}
-*	EXEC_INTERVAL_END;
-*/
+ *	{
+ *		printf("clock() = %d \r\n", clock());
+ *	}
+ *	EXEC_INTERVAL_END;
+ */
 /* ----------------------------- */
 #define EXEC_INTERVAL(period)                           \
     {                                                   \
@@ -78,21 +89,28 @@ static uint64_t clock_ms()
 // 名稱: console
 // 功能: 等同於printf
 /* ----------------------------- */
-#define console(...)                                       \
-    {                                                      \
+#define console(...)                                      \
+    {                                                     \
         PRINT_FUNCTION("[%ld ms] ", CLOCK_MS_FUNCTION()); \
-        PRINT_FUNCTION(__VA_ARGS__);                       \
-        PRINT_FUNCTION("\r\n");                            \
+        PRINT_FUNCTION(__VA_ARGS__);                      \
+        PRINT_FUNCTION("\r\n");                           \
+    }
+#define consoler(...)                                     \
+    {                                                     \
+        PRINT_FUNCTION("[%ld ms] ", CLOCK_MS_FUNCTION()); \
+        PRINT_FUNCTION(__VA_ARGS__);                      \
+        PRINT_FUNCTION("\r");                             \
+        fflush(stdout);                                   \
     }
 /* ----------------------------- */
 // 名稱: console_tag
 // 功能: 多加入tag欄位
 /* ----------------------------- */
-#define console_tag(tag_name, ...)                                       \
-    {                                                                    \
+#define console_tag(tag_name, ...)                                      \
+    {                                                                   \
         PRINT_FUNCTION("[%ld ms][%s] ", CLOCK_MS_FUNCTION(), tag_name); \
-        PRINT_FUNCTION(__VA_ARGS__);                                     \
-        PRINT_FUNCTION("\r\n");                                          \
+        PRINT_FUNCTION(__VA_ARGS__);                                    \
+        PRINT_FUNCTION("\r\n");                                         \
     }
 /* ----------------------------- */
 // 名稱: console_throttle
