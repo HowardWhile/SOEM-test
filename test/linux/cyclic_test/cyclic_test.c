@@ -28,7 +28,8 @@
 #define EC_SLAVE_ID 1
 
 // RT Loop的週期
-#define PERIOD_NS (1000000)
+#define PERIOD_NS (1000000) // 1k hz
+//#define PERIOD_NS (100000) // 10k hz
 #define NSEC_PER_SEC (1000000000)
 
 boolean bg_cancel = 0;
@@ -72,7 +73,7 @@ void cyclic_task()
     // 顯示
     EXEC_INTERVAL(100)
     {
-        consoler("cyc_count: %ld, (min, max, avg)us = (%ld, %ld, %.2f) T:%ld ****",
+        console("cyc_count: %ld, (min, max, avg)us = (%ld, %ld, %.2f) T:%ld ****",
                  cyc_count,
                  min_dt / 1000, max_dt / 1000, (double)sum_dt / cyc_count / 1000,
                  dc_time);
@@ -111,6 +112,24 @@ OSAL_THREAD_FUNC keyboard(void *ptr)
     endwin();
     bg_cancel = 1;
     return;
+}
+
+struct timespec timespec_add(struct timespec time1, struct timespec time2)
+{
+    struct timespec result;
+
+    if ((time1.tv_nsec + time2.tv_nsec) >= NSEC_PER_SEC)
+    {
+        result.tv_sec = time1.tv_sec + time2.tv_sec + 1;
+        result.tv_nsec = time1.tv_nsec + time2.tv_nsec - NSEC_PER_SEC;
+    }
+    else
+    {
+        result.tv_sec = time1.tv_sec + time2.tv_sec;
+        result.tv_nsec = time1.tv_nsec + time2.tv_nsec;
+    }
+
+    return result;
 }
 
 void signal_handler(int signum)
@@ -162,12 +181,13 @@ int main(void)
     
     printf("Starting RT task with dt=%u ns.\r\n", PERIOD_NS);
     clock_gettime(CLOCK_MONOTONIC, &wakeup_time);
-    wakeup_time.tv_sec += 1; /* start in future */
-    wakeup_time.tv_nsec = 0;
+    wakeup_time.tv_nsec += PERIOD_NS;
 
     while (!bg_cancel)
     {
         //console_fps("loop");
+        const struct timespec cycletime = {0, PERIOD_NS};
+        wakeup_time = timespec_add(wakeup_time, cycletime);
         int ret = clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &wakeup_time, NULL);
         if (ret)
         {
@@ -175,19 +195,13 @@ int main(void)
             break;
         }
 
-        static int64 rt_check_time = 0;
-        if (rt_check_time != clock_ms())
+        //static int64 rt_check_time = 0;
+        //if (rt_check_time != clock_ms())
         {
-            rt_check_time = clock_ms();
+            //rt_check_time = clock_ms();
             // --------------------------------------------
             cyclic_task();
             // --------------------------------------------
-        }
-
-        wakeup_time.tv_nsec += PERIOD_NS;
-        while (wakeup_time.tv_nsec >= NSEC_PER_SEC) {
-            wakeup_time.tv_nsec -= NSEC_PER_SEC;
-            wakeup_time.tv_sec++;
         }
     }
 
