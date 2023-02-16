@@ -84,7 +84,7 @@ void simpletest(char *ifname)
             printf("Operational state reached for all slaves.\n");
             inOP = TRUE;
                 /* cyclic loop */
-            for(i = 1; i <= 10000; i++)
+            for(i = 1; i <= 1000000; i++)
             {
                ec_send_processdata();
                wkc = ec_receive_processdata(EC_TIMEOUTRET);
@@ -106,7 +106,7 @@ void simpletest(char *ifname)
                         printf(" T:%"PRId64"\r",ec_DCtime);
                         needlf = TRUE;
                     }
-                    osal_usleep(5000);
+                    osal_usleep(500);
 
                 }
                 inOP = FALSE;

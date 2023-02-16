@@ -22,18 +22,18 @@
 #define EC_TIMEOUTMON 500
 
 // 通訊用的eth設備名稱
-#define ETH_CH_NAME "enp2s0"
+#define ETH_CH_NAME "enp3s0"
 
 // Slave的站號
 #define EC_SLAVE_ID 1
 
 // RT Loop的週期
-#define PERIOD_NS (100000)
+#define PERIOD_NS (1000000)
 #define NSEC_PER_SEC (1000000000)
 
 boolean bg_cancel = 0;
-OSAL_THREAD_HANDLE thread1;
-OSAL_THREAD_HANDLE thread2;
+OSAL_THREAD_HANDLE bg_ecatcheck;
+OSAL_THREAD_HANDLE bg_keyboard;
 
 boolean dynamicY = FALSE;
 
@@ -128,7 +128,7 @@ boolean getBit(uint8 *value, int p)
 void cyclic_task()
 {
     // 開關所有的Y
-    if (dynamicY && cyc_count % 10 == 0)
+    if (dynamicY && cyc_count % 100 == 0)
     {
         for (size_t idx = 0; idx < 32; idx++)
         {
@@ -150,8 +150,8 @@ void cyclic_task()
     ec_send_processdata();
     wkc = ec_receive_processdata(EC_TIMEOUTRET);
 
-    int64 dc_time = ec_DCtime;
-    //int64 dc_time = clock_ns();
+    //int64 dc_time = ec_DCtime;
+    int64 dc_time = clock_ns();
     int64 dt = dc_time - last_cktime;
     cyc_count++;
     sum_dt += dt;
@@ -167,7 +167,7 @@ void cyclic_task()
     // 顯示
     EXEC_INTERVAL(100)
     {
-        consoler("cyc_count: %ld, (min, max, avg)us = (%ld, %ld, %.2f) T:%ld ****",
+        consoler("cyc_count: %ld, (min, max, avg)us = (%ld, %ld, %.2f) T:%ldns ****",
                 cyc_count,
                 min_dt / 1000, max_dt / 1000, (double)sum_dt / cyc_count / 1000,
                 dc_time);
@@ -191,6 +191,24 @@ void cyclic_task()
         // printf(" T:%" PRId64 "\r", ec_DCtime);
         // needlf = TRUE;
     }
+}
+
+struct timespec timespec_add(struct timespec time1, struct timespec time2)
+{
+    struct timespec result;
+
+    if ((time1.tv_nsec + time2.tv_nsec) >= NSEC_PER_SEC)
+    {
+        result.tv_sec = time1.tv_sec + time2.tv_sec + 1;
+        result.tv_nsec = time1.tv_nsec + time2.tv_nsec - NSEC_PER_SEC;
+    }
+    else
+    {
+        result.tv_sec = time1.tv_sec + time2.tv_sec;
+        result.tv_nsec = time1.tv_nsec + time2.tv_nsec;
+    }
+
+    return result;
 }
 
 void simpletest(char *ifname)
@@ -280,30 +298,25 @@ void simpletest(char *ifname)
                 // ----------------------------------------------------
                 printf("[%ld ms] Starting RT task with dt=%u ns.\r\n", clock_ms(), PERIOD_NS);
                 struct timespec wakeup_time;
-                if (clock_gettime(CLOCK_REALTIME, &wakeup_time) == -1) // 當前的精準時間
+                if (clock_gettime(CLOCK_MONOTONIC, &wakeup_time) == -1) // 當前的精準時間
                 {
                     printf("clock_gettime failed\r\n");
                     return;
                 }
-
-                // wakeup_time.tv_sec += 1; /* start in future */
-                // wakeup_time.tv_nsec = 0;
 
                 // 初始統計時間
                 last_cktime = ec_DCtime;
                 while (!bg_cancel)
                 {
                     // sleep直到指定的時間點
-                    int ret = clock_nanosleep(CLOCK_REALTIME, TIMER_ABSTIME, &wakeup_time, NULL);
+                    const struct timespec cycletime = {0, PERIOD_NS};
+                    wakeup_time = timespec_add(wakeup_time, cycletime);
+                    int ret = clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &wakeup_time, NULL);
                     if (ret)
                     {
                         // sleep錯誤處理
-                        printf("clock_nanosleep(): %s\r\n", strerror(ret));
-                        if (ret == EINTR)
-                            printf("Interrupted by signal handler\r\n");
-                        else
-                            printf("clock_nanosleep");
-                        break;
+                        printf("clock_nanosleep(): %s\n", strerror(ret));
+                        //break;
                     }
 
                     static int64 rt_check_time = 0;
@@ -316,13 +329,6 @@ void simpletest(char *ifname)
                         // --------------------------------------------
                     }
 
-                    // 指定下次睡醒的時間點
-                    wakeup_time.tv_nsec += PERIOD_NS;
-                    while (wakeup_time.tv_nsec >= NSEC_PER_SEC)
-                    {
-                        wakeup_time.tv_nsec -= NSEC_PER_SEC;
-                        wakeup_time.tv_sec++;
-                    }
                 }
                 inOP = FALSE;
             }
@@ -499,8 +505,8 @@ int main(void)
     /* create thread to handle slave error handling in OP */
     //      pthread_create( &thread1, NULL, (void *) &ecatcheck, (void*) &ctime);
 
-    osal_thread_create(&thread1, 128000, &ecatcheck, (void *)&ctime);
-    osal_thread_create(&thread2, 128000, &keyboard, (void *)&ctime);
+    osal_thread_create(&bg_ecatcheck, 128000, &ecatcheck, (void *)&ctime);
+    osal_thread_create(&bg_keyboard, 2048, &keyboard, (void *)&ctime);
 
     // 攔截 ctrl + C 事件
     struct sigaction sa;
