@@ -21,8 +21,24 @@
 #include <sys/resource.h>
 
 // keyboard
-#include <curses.h>
+#include <termios.h> //PISOX中定义的标准接口
 #include <ctype.h>
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/time.h>
+#include <unistd.h>
+#include <string.h>
+#include <sys/time.h>
+#include <time.h>
+#include <pthread.h>
+#include <math.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <termios.h> 
+
+
 
 #include "ethercat.h"
 #include "arc_console.hpp"
@@ -300,9 +316,6 @@ void simpletest(char *ifname)
 
     printf("Starting simple test\r\n");
 
-    // 設定程式優先權
-    setPRICPUx(99, CPU_ID); // -99=RT
-
     /* initialise SOEM, bind socket to ifname */
     if (ec_init(ifname))
     {
@@ -517,15 +530,36 @@ OSAL_THREAD_FUNC keyboard(void *ptr)
 {
     (void)ptr; /* Not used */
 
-    int ch;
-    initscr();
-    noecho();
-
     // 設定程式優先權
     setPRICPUx(21, CPU_ID); //
+
+    struct termios new_settings;
+    struct termios stored_settings;
+
+    tcgetattr(0, &stored_settings);
+    new_settings = stored_settings;
+    new_settings.c_lflag &= (~ICANON); // 屏蔽整行缓存
+    new_settings.c_cc[VTIME] = 0;
+
+    /*这个函数调用把当前终端接口变量的值写入termios_p参数指向的结构。
+    如果这些值其后被修改了，你可以通过调用函数tcsetattr来重新配置
+    调用tcgetattr初始化一个终端对应的termios结构
+    int tcgetattr(int fd, struct termios *termios_p);*/
+    tcgetattr(0, &stored_settings);
+    new_settings.c_cc[VMIN] = 1;
+
+    /*int tcsetattr(int fd , int actions , const struct termios *termios_h)
+    参数actions控制修改方式，共有三种修改方式，如下所示。
+    1.TCSANOW：立刻对值进行修改
+    2.TCSADRAIN：等当前的输出完成后再对值进行修改。
+    3.TCSAFLUSH：等当前的输出完成之后，再对值进行修改，但丢弃还未从read调用返回的当前的可用的任何输入。*/
+
+    int ch;
     while (ch != 'q')
     {
-        ch = getch();
+        tcsetattr(0, TCSANOW, &new_settings);
+        ch = getchar();
+        tcsetattr(0, TCSANOW, &stored_settings);
 
         if (isdigit(ch))
         {
@@ -549,9 +583,10 @@ OSAL_THREAD_FUNC keyboard(void *ptr)
             break;
         }
 
-        // printf("[keyboard] press (%c) (%d)\r\r\n", ch, ch);
+        //printf("[keyboard] press (%c) (%d)\r\r\n", ch, ch);
+        osal_usleep(10000);
     }
-    endwin();
+
     bg_cancel = 1;
     return;
 }
@@ -570,16 +605,14 @@ void signal_handler(int signum)
 // int main(int argc, char *argv[])
 int main(void)
 {
-    initscr();
-    noecho();
-    setNI(-10);
 
-    printw("SOEM (Simple Open EtherCAT Master)\r\ndelta io\r\n");
+    printf("SOEM (Simple Open EtherCAT Master)\r\ndelta io\r\n");
     /* create thread to handle slave error handling in OP */
     //      pthread_create( &thread1, NULL, (void *) &ecatcheck, (void*) &ctime);
 
-    set_latency_target(); // 消除系统时钟偏移
 
+
+    set_latency_target(); // 消除系统时钟偏移
     osal_thread_create(&bg_ecatcheck, 128000, &ecatcheck, (void *)&ctime);
     osal_thread_create(&bg_keyboard, 2048, &keyboard, (void *)&ctime);
 
@@ -591,11 +624,14 @@ int main(void)
     if (sigaction(SIGINT, &sa, NULL) == -1)
         printf("Failed to caught signal\r\n");
 
+    // 設定程式優先權
+    setPRICPUx(99, CPU_ID); // -99=RT
+    setNI(-20);
+
     /* start cyclic part */
     simpletest(ETH_CH_NAME);
 
     printf("End program\r\n");
-    endwin();
 
     return (0);
 }
