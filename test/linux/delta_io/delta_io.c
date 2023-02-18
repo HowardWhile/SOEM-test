@@ -1,6 +1,10 @@
+// 線程 cpu 榜定
+#define _GNU_SOURCE
+#include <sched.h>
+#include <stdio.h>
+
 #include <errno.h>
 
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <inttypes.h>
@@ -31,8 +35,11 @@
 // Slave的站號
 #define EC_SLAVE_ID 1
 
+// 指定運行的CPU編號
+#define CPU_ID 4
+
 // RT Loop的週期
-#define PERIOD_NS (1000000)
+#define PERIOD_NS (100000)
 #define NSEC_PER_SEC (1000000000)
 
 boolean bg_cancel = 0;
@@ -77,12 +84,51 @@ void set_latency_target(void)
         ret = write(latency_target_fd, &latency_target_value, 4);
         if (ret == 0)
         {
-            printf("# error setting cpu_dma_latency to %d!: %s\n", latency_target_value, strerror(errno));
+            printf("# error setting cpu_dma_latency to %d!: %s\r\n", latency_target_value, strerror(errno));
             close(latency_target_fd);
             return;
         }
-        printf("# /dev/cpu_dma_latency set to %dus\n", latency_target_value);
+        printf("# /dev/cpu_dma_latency set to %dus\r\n", latency_target_value);
     }
+}
+// Priority
+int setPRICPUx(int Priority, int cpu_id)
+{
+    int ret = 0;
+    // 指定 程序運作的cpu_id
+    cpu_set_t mask;
+    CPU_ZERO(&mask);
+    CPU_SET(cpu_id, &mask);
+    pthread_t thread = pthread_self();
+    pthread_setaffinity_np(thread, sizeof(mask), &mask);
+
+    // Set Priority, 99 = RT
+    struct sched_param schedp;
+    memset(&schedp, 0, sizeof(schedp));
+    schedp.sched_priority = Priority;
+    ret = sched_setscheduler(0, SCHED_FIFO, &schedp);
+    if (ret)
+    {
+        printf("Warning: sched_setscheduler failed: %s\r\n", strerror(errno));
+        return ret;
+    }
+
+    return ret;
+}
+
+int setNI(int Niceness)
+{
+    int ret = 0;
+    pid_t pid = getpid(); // 獲得進程PID
+
+    // Set NI (Niceness) -19 = 最高優先權
+    ret = setpriority(PRIO_PROCESS, pid, Niceness);
+    if (ret)
+    {
+        printf("Warning: setpriority failed: %s\r\n", strerror(errno));
+        return ret;
+    }
+    return ret;
 }
 
 int setupDeltaIO(void)
@@ -175,18 +221,18 @@ void cyclic_task()
         modifyBit(&ec_slave[EC_SLAVE_ID].outputs[3], idx_bit, DO[3 * 8 + idx_bit]);
     }
 
-    //int64 ck_time1 = clock_ns();
+    // int64 ck_time1 = clock_ns();
     ec_send_processdata();
-    //int64 ck_time2 = clock_ns();
+    // int64 ck_time2 = clock_ns();
     wkc = ec_receive_processdata(1);
-    //int64 ck_time3 = clock_ns();
+    // int64 ck_time3 = clock_ns();
 
     int64 dc_time = ec_DCtime;
-    //int64 dc_time = clock_ns();
+    // int64 dc_time = clock_ns();
     int64 dt = dc_time - last_cktime;
-    //int64 dt = ck_time2 - ck_time1;
-    //int64 dt = ck_time3 - ck_time2;
-    //int64 dt = ck_time3 - ck_time1;
+    // int64 dt = ck_time2 - ck_time1;
+    // int64 dt = ck_time3 - ck_time2;
+    // int64 dt = ck_time3 - ck_time1;
 
     cyc_count++;
     sum_dt += dt;
@@ -203,9 +249,9 @@ void cyclic_task()
     EXEC_INTERVAL(100)
     {
         consoler("cyc_count: %ld, (min, max, avg)us = (%ld, %ld, %.2f) T:%ldns ****",
-                cyc_count,
-                min_dt / 1000, max_dt / 1000, (double)sum_dt / cyc_count / 1000,
-                dc_time);
+                 cyc_count,
+                 min_dt / 1000, max_dt / 1000, (double)sum_dt / cyc_count / 1000,
+                 dc_time);
     }
     EXEC_INTERVAL_END
 
@@ -253,6 +299,10 @@ void simpletest(char *ifname)
     inOP = FALSE;
 
     printf("Starting simple test\r\n");
+
+    // 設定程式優先權
+    setPRICPUx(99, CPU_ID); // -99=RT
+
     /* initialise SOEM, bind socket to ifname */
     if (ec_init(ifname))
     {
@@ -312,23 +362,6 @@ void simpletest(char *ifname)
                 printf("Operational state reached for all slaves.\r\n");
                 inOP = TRUE;
                 // ----------------------------------------------------
-                // 設定程式的兩種優先權
-                // ----------------------------------------------------
-                // Set PR (Priority) to RT(-99) 最高優先權
-                printf("Set priority ...\r\n");
-                struct sched_param param = {};
-                param.sched_priority = sched_get_priority_max(SCHED_FIFO);
-                printf("Using priority %i.", param.sched_priority);
-                if (sched_setscheduler(0, SCHED_FIFO, &param) == -1)
-                    printf("sched_setscheduler failed\r\n"); // 錯誤還是可以跑
-
-                // Set NI (Niceness) to -19 最高優先權
-                pid_t pid = getpid(); // 獲得進程PID
-                printf("PID = %d\r\n", pid);
-                if (setpriority(PRIO_PROCESS, pid, -19))                                // 設置進程優先順序
-                    printf("Warning: Failed to set priority: %s\r\n", strerror(errno)); // 錯誤還是可以跑
-
-                // ----------------------------------------------------
                 // real-time 定時器
                 // ----------------------------------------------------
                 printf("[%ld ms] Starting RT task with dt=%u ns.\r\n", clock_ms(), PERIOD_NS);
@@ -351,7 +384,7 @@ void simpletest(char *ifname)
                     {
                         // sleep錯誤處理
                         printf("clock_nanosleep(): %s\n", strerror(ret));
-                        //break;
+                        // break;
                     }
 
                     static int64 rt_check_time = 0;
@@ -359,11 +392,10 @@ void simpletest(char *ifname)
                     {
                         rt_check_time = clock_ms();
                         // --------------------------------------------
-                        //console_fps("cyclic_task");
+                        // console_fps("cyclic_task");
                         cyclic_task();
                         // --------------------------------------------
                     }
-
                 }
                 inOP = FALSE;
             }
@@ -403,6 +435,9 @@ OSAL_THREAD_FUNC ecatcheck(void *ptr)
 {
     int slave;
     (void)ptr; /* Not used */
+
+    // 設定程式優先權
+    setPRICPUx(20, CPU_ID); //
 
     while (!bg_cancel)
     {
@@ -486,6 +521,8 @@ OSAL_THREAD_FUNC keyboard(void *ptr)
     initscr();
     noecho();
 
+    // 設定程式優先權
+    setPRICPUx(21, CPU_ID); //
     while (ch != 'q')
     {
         ch = getch();
@@ -535,6 +572,7 @@ int main(void)
 {
     initscr();
     noecho();
+    setNI(-10);
 
     printw("SOEM (Simple Open EtherCAT Master)\r\ndelta io\r\n");
     /* create thread to handle slave error handling in OP */
@@ -552,7 +590,6 @@ int main(void)
     sa.sa_flags = 0;
     if (sigaction(SIGINT, &sa, NULL) == -1)
         printf("Failed to caught signal\r\n");
-
 
     /* start cyclic part */
     simpletest(ETH_CH_NAME);
