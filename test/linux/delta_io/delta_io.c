@@ -243,8 +243,8 @@ void cyclic_task()
     wkc = ec_receive_processdata(1);
     // int64 ck_time3 = clock_ns();
 
-    int64 dc_time = ec_DCtime;
-    // int64 dc_time = clock_ns();
+    //int64 dc_time = ec_DCtime;
+     int64 dc_time = clock_ns();
     int64 dt = dc_time - last_cktime;
     // int64 dt = ck_time2 - ck_time1;
     // int64 dt = ck_time3 - ck_time2;
@@ -541,18 +541,9 @@ OSAL_THREAD_FUNC keyboard(void *ptr)
     new_settings.c_lflag &= (~ICANON); // 屏蔽整行缓存
     new_settings.c_cc[VTIME] = 0;
 
-    /*这个函数调用把当前终端接口变量的值写入termios_p参数指向的结构。
-    如果这些值其后被修改了，你可以通过调用函数tcsetattr来重新配置
-    调用tcgetattr初始化一个终端对应的termios结构
-    int tcgetattr(int fd, struct termios *termios_p);*/
+    int tcgetattr(int fd, struct termios *termios_p);
     tcgetattr(0, &stored_settings);
     new_settings.c_cc[VMIN] = 1;
-
-    /*int tcsetattr(int fd , int actions , const struct termios *termios_h)
-    参数actions控制修改方式，共有三种修改方式，如下所示。
-    1.TCSANOW：立刻对值进行修改
-    2.TCSADRAIN：等当前的输出完成后再对值进行修改。
-    3.TCSAFLUSH：等当前的输出完成之后，再对值进行修改，但丢弃还未从read调用返回的当前的可用的任何输入。*/
 
     int ch;
     while (ch != 'q')
