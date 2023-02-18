@@ -22,13 +22,13 @@
 #define EC_TIMEOUTMON 500
 
 // 通訊用的eth設備名稱
-#define ETH_CH_NAME "enp3s0"
+#define ETH_CH_NAME "eno1"
 
 // Slave的站號
 #define EC_SLAVE_ID 1
 
 // RT Loop的週期
-#define PERIOD_NS (1000000)
+#define PERIOD_NS (100000)
 #define NSEC_PER_SEC (1000000000)
 
 boolean bg_cancel = 0;
@@ -147,12 +147,19 @@ void cyclic_task()
         modifyBit(&ec_slave[EC_SLAVE_ID].outputs[3], idx_bit, DO[3 * 8 + idx_bit]);
     }
 
+    int64 ck_time1 = clock_ns();
     ec_send_processdata();
-    wkc = ec_receive_processdata(EC_TIMEOUTRET);
+    int64 ck_time2 = clock_ns();
+    wkc = ec_receive_processdata(1);
+    //int64 ck_time3 = clock_ns();
 
-    //int64 dc_time = ec_DCtime;
-    int64 dc_time = clock_ns();
-    int64 dt = dc_time - last_cktime;
+    int64 dc_time = ec_DCtime;
+    //int64 dc_time = clock_ns();
+    //int64 dt = dc_time - last_cktime;
+    int64 dt = ck_time2 - ck_time1;
+    //int64 dt = ck_time3 - ck_time2;
+    //int64 dt = ck_time3 - ck_time1;
+
     cyc_count++;
     sum_dt += dt;
 
