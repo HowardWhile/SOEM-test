@@ -8,6 +8,10 @@
 
 #include <sys/time.h>
 
+// cpu latency
+#include <sys/stat.h>
+#include <fcntl.h>
+
 // set priorty
 #include <unistd.h>
 #include <sys/resource.h>
@@ -28,7 +32,7 @@
 #define EC_SLAVE_ID 1
 
 // RT Loop的週期
-#define PERIOD_NS (100000)
+#define PERIOD_NS (1000000)
 #define NSEC_PER_SEC (1000000000)
 
 boolean bg_cancel = 0;
@@ -55,6 +59,30 @@ int64 cyc_count = 0;
 static int sdo_write8(uint16 slave, uint16 index, uint8 subindex, uint8 value)
 {
     return ec_SDOwrite(slave, index, subindex, FALSE, sizeof(uint8), &value, EC_TIMEOUTRXM);
+}
+
+/* 消除系统时钟偏移函数，取自cyclic_test */
+void set_latency_target(void)
+{
+    struct stat s;
+    int ret;
+
+    if (stat("/dev/cpu_dma_latency", &s) == 0)
+    {
+        int latency_target_fd = open("/dev/cpu_dma_latency", O_RDWR);
+        if (latency_target_fd == -1)
+            return;
+
+        int32_t latency_target_value = 0;
+        ret = write(latency_target_fd, &latency_target_value, 4);
+        if (ret == 0)
+        {
+            printf("# error setting cpu_dma_latency to %d!: %s\n", latency_target_value, strerror(errno));
+            close(latency_target_fd);
+            return;
+        }
+        printf("# /dev/cpu_dma_latency set to %dus\n", latency_target_value);
+    }
 }
 
 int setupDeltaIO(void)
@@ -147,16 +175,16 @@ void cyclic_task()
         modifyBit(&ec_slave[EC_SLAVE_ID].outputs[3], idx_bit, DO[3 * 8 + idx_bit]);
     }
 
-    int64 ck_time1 = clock_ns();
+    //int64 ck_time1 = clock_ns();
     ec_send_processdata();
-    int64 ck_time2 = clock_ns();
+    //int64 ck_time2 = clock_ns();
     wkc = ec_receive_processdata(1);
     //int64 ck_time3 = clock_ns();
 
     int64 dc_time = ec_DCtime;
     //int64 dc_time = clock_ns();
-    //int64 dt = dc_time - last_cktime;
-    int64 dt = ck_time2 - ck_time1;
+    int64 dt = dc_time - last_cktime;
+    //int64 dt = ck_time2 - ck_time1;
     //int64 dt = ck_time3 - ck_time2;
     //int64 dt = ck_time3 - ck_time1;
 
@@ -511,6 +539,8 @@ int main(void)
     printw("SOEM (Simple Open EtherCAT Master)\r\ndelta io\r\n");
     /* create thread to handle slave error handling in OP */
     //      pthread_create( &thread1, NULL, (void *) &ecatcheck, (void*) &ctime);
+
+    set_latency_target(); // 消除系统时钟偏移
 
     osal_thread_create(&bg_ecatcheck, 128000, &ecatcheck, (void *)&ctime);
     osal_thread_create(&bg_keyboard, 2048, &keyboard, (void *)&ctime);

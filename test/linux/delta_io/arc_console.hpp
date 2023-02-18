@@ -134,7 +134,7 @@ int64_t clock_ns()
         static int fps_count = 0;   \
         EXEC_INTERVAL(1000)         \
         {                           \
-            console("[%s] fps: %d", \
+            console("[%s] fps: %d ", \
                     tag_name,       \
                     fps_count);     \
             fps_count = 0;          \
