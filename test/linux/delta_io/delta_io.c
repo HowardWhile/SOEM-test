@@ -24,7 +24,6 @@
 #include <termios.h> //PISOX中定义的标准接口
 #include <ctype.h>
 
-
 #include "ethercat.h"
 #include "arc_console.hpp"
 
@@ -40,8 +39,7 @@
 #define CPU_ID 4
 
 // RT Loop的週期
-#define PERIOD_NS (500000)
-#define NSEC_PER_SEC (1000000000)
+#define PERIOD_NS (1000000)
 
 boolean bg_cancel = 0;
 OSAL_THREAD_HANDLE bg_ecatcheck;
@@ -200,97 +198,167 @@ boolean getBit(uint8 *value, int p)
     return (*value >> p) & 1;
 }
 
-void cyclic_task()
+static inline int64_t calcdiff_ns(struct timespec t1, struct timespec t2)
 {
-    // 開關所有的Y
-    if (dynamicY && cyc_count % 100 == 0)
+    int64_t tdiff;
+    tdiff = NSEC_PER_SEC * (int64_t)((int)t1.tv_sec - (int)t2.tv_sec);
+    tdiff += ((int)t1.tv_nsec - (int)t2.tv_nsec);
+    return tdiff;
+}
+
+/* add ns to timespec */
+void add_timespec(struct timespec *ts, int64 addtime)
+{
+    int64 sec, nsec;
+
+    nsec = addtime % NSEC_PER_SEC;
+    sec = (addtime - nsec) / NSEC_PER_SEC;
+    ts->tv_sec += sec;
+    ts->tv_nsec += nsec;
+    if (ts->tv_nsec > NSEC_PER_SEC)
     {
-        for (size_t idx = 0; idx < 32; idx++)
-        {
-            DO[idx] = !DO[idx];
-        }
-    }
-
-    // ------------------------------------
-    // update output
-    // ------------------------------------
-    for (size_t idx_bit = 0; idx_bit < 8; idx_bit++)
-    {
-        modifyBit(&ec_slave[EC_SLAVE_ID].outputs[0], idx_bit, DO[0 * 8 + idx_bit]);
-        modifyBit(&ec_slave[EC_SLAVE_ID].outputs[1], idx_bit, DO[1 * 8 + idx_bit]);
-        modifyBit(&ec_slave[EC_SLAVE_ID].outputs[2], idx_bit, DO[2 * 8 + idx_bit]);
-        modifyBit(&ec_slave[EC_SLAVE_ID].outputs[3], idx_bit, DO[3 * 8 + idx_bit]);
-    }
-
-    // int64 ck_time1 = clock_ns();
-    ec_send_processdata();
-    // int64 ck_time2 = clock_ns();
-    wkc = ec_receive_processdata(1);
-    // int64 ck_time3 = clock_ns();
-
-    int64 dc_time = ec_DCtime;
-    //int64 dc_time = clock_ns();
-    int64 dt = dc_time - last_cktime;
-    // int64 dt = ck_time2 - ck_time1;
-    // int64 dt = ck_time3 - ck_time2;
-    // int64 dt = ck_time3 - ck_time1;
-
-    cyc_count++;
-    sum_dt += dt;
-
-    if (dt < min_dt)
-        min_dt = dt;
-
-    if (dt > max_dt)
-        max_dt = dt;
-
-    last_cktime = dc_time;
-
-    // 顯示
-    EXEC_INTERVAL(100)
-    {
-        consoler("cyc_count: %ld, (min, max, avg)us = (%ld, %ld, %.2f) T:%ldns ****",
-                 cyc_count,
-                 min_dt / 1000, max_dt / 1000, (double)sum_dt / cyc_count / 1000,
-                 dc_time);
-    }
-    EXEC_INTERVAL_END
-
-    if (wkc >= expectedWKC)
-    {
-        // printf("\t\tProcessdata cycle %4d, WKC %d , O:", cyc_count++, wkc);
-
-        // for (int j = 0; j < 4; j++)
-        // {
-        //     printf(" %2.2x", *(ec_slave[0].outputs + j));
-        // }
-
-        // printf(" I:");
-        // for (int j = 0; j < 4; j++)
-        // {
-        //     printf(" %2.2x", *(ec_slave[0].inputs + j));
-        // }
-        // printf(" T:%" PRId64 "\r", ec_DCtime);
-        // needlf = TRUE;
+        nsec = ts->tv_nsec % NSEC_PER_SEC;
+        ts->tv_sec += (ts->tv_nsec - nsec) / NSEC_PER_SEC;
+        ts->tv_nsec = nsec;
     }
 }
 
-struct timespec timespec_add(struct timespec time1, struct timespec time2)
+/* PI calculation to get linux time synced to DC time */
+void ec_sync(int64 reftime, int64 cycletime, int64 *offsettime)
 {
-    struct timespec result;
-
-    if ((time1.tv_nsec + time2.tv_nsec) >= NSEC_PER_SEC)
+    static int64 integral = 0;
+    int64 delta;
+    /* set linux sync point 50us later than DC sync, just as example */
+    delta = (reftime - 50000) % cycletime;
+    if (delta > (cycletime / 2))
     {
-        result.tv_sec = time1.tv_sec + time2.tv_sec + 1;
-        result.tv_nsec = time1.tv_nsec + time2.tv_nsec - NSEC_PER_SEC;
+        delta = delta - cycletime;
     }
-    else
+    if (delta > 0)
     {
-        result.tv_sec = time1.tv_sec + time2.tv_sec;
-        result.tv_nsec = time1.tv_nsec + time2.tv_nsec;
+        integral++;
+    }
+    if (delta < 0)
+    {
+        integral--;
+    }
+    *offsettime = -(delta / 100) - (integral / 20);
+}
+
+void cyclic_task()
+{ 
+    // ----------------------------------------------------
+    // real-time 定時器
+    // ----------------------------------------------------
+    printf("[%ld ms] Starting RT task with dt=%u ns.\r\n", clock_ms(), PERIOD_NS);
+    const int64 cycletime = PERIOD_NS; /* cycletime in ns */
+
+    struct timespec wakeup_time;
+    if (clock_gettime(CLOCK_MONOTONIC, &wakeup_time) == -1) // 當前的精準時間
+    {
+        printf("clock_gettime failed\r\n");
+        return;
     }
 
-    return result;
+    // 初始統計時間
+    last_cktime = ec_DCtime;
+
+    //
+    struct timespec tnow;
+    int64 toff = 0;
+    int64 dt;
+
+    while (!bg_cancel)
+    {
+        // sleep直到指定的時間點
+        add_timespec(&wakeup_time, cycletime + toff);
+        int ret = clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &wakeup_time, NULL);
+        clock_gettime(CLOCK_MONOTONIC, &tnow);
+        dt = calcdiff_ns(tnow, wakeup_time);
+
+        if (ret)
+        {
+            // sleep錯誤處理
+            printf("clock_nanosleep(): %s\n", strerror(ret));
+            // break;
+        }
+
+        // calulate toff to get linux time and DC synced
+        if (ec_slave[0].hasdc)
+        {
+            ec_sync(ec_DCtime, cycletime, &toff);
+            // console("[debug] toff = %ld ns", toff);
+        }
+
+        int64 ck_time1 = clock_ns();
+        wkc = ec_receive_processdata(EC_TIMEOUTRET);
+        int64 ck_time2 = clock_ns();
+
+        // 開關所有的Y
+        if (dynamicY && cyc_count % 100 == 0)
+        {
+            for (size_t idx = 0; idx < 32; idx++)
+            {
+                DO[idx] = !DO[idx];
+            }
+        }
+
+        // ------------------------------------
+        // update output
+        // ------------------------------------
+        for (size_t idx_bit = 0; idx_bit < 8; idx_bit++)
+        {
+            modifyBit(&ec_slave[EC_SLAVE_ID].outputs[0], idx_bit, DO[0 * 8 + idx_bit]);
+            modifyBit(&ec_slave[EC_SLAVE_ID].outputs[1], idx_bit, DO[1 * 8 + idx_bit]);
+            modifyBit(&ec_slave[EC_SLAVE_ID].outputs[2], idx_bit, DO[2 * 8 + idx_bit]);
+            modifyBit(&ec_slave[EC_SLAVE_ID].outputs[3], idx_bit, DO[3 * 8 + idx_bit]);
+        }
+
+        int64 ck_time3 = clock_ns();
+        ec_send_processdata();
+        int64 ck_time4 = clock_ns();
+
+        //dt = ck_time2 - ck_time1;
+        //dt = ck_time4 - ck_time3;
+
+        cyc_count++;
+        sum_dt += dt;
+
+        if (dt < min_dt)
+            min_dt = dt;
+
+        if (dt > max_dt)
+            max_dt = dt;
+
+
+        // 顯示
+        EXEC_INTERVAL(100)
+        {
+            consoler("cyc_count: %ld, Latency:(min, max, avg)us = (%ld, %ld, %.2f) T:%ldns ****",
+                     cyc_count,
+                     min_dt / 1000, max_dt / 1000, (double)sum_dt / cyc_count / 1000,
+                     ec_DCtime);
+        }
+        EXEC_INTERVAL_END
+
+        if (wkc >= expectedWKC)
+        {
+            // printf("\t\tProcessdata cycle %4d, WKC %d , O:", cyc_count++, wkc);
+
+            // for (int j = 0; j < 4; j++)
+            // {
+            //     printf(" %2.2x", *(ec_slave[0].outputs + j));
+            // }
+
+            // printf(" I:");
+            // for (int j = 0; j < 4; j++)
+            // {
+            //     printf(" %2.2x", *(ec_slave[0].inputs + j));
+            // }
+            // printf(" T:%" PRId64 "\r", ec_DCtime);
+            // needlf = TRUE;
+        }
+    }
 }
 
 void simpletest(char *ifname)
@@ -359,42 +427,9 @@ void simpletest(char *ifname)
             {
                 printf("Operational state reached for all slaves.\r\n");
                 inOP = TRUE;
-                // ----------------------------------------------------
-                // real-time 定時器
-                // ----------------------------------------------------
-                printf("[%ld ms] Starting RT task with dt=%u ns.\r\n", clock_ms(), PERIOD_NS);
-                struct timespec wakeup_time;
-                if (clock_gettime(CLOCK_MONOTONIC, &wakeup_time) == -1) // 當前的精準時間
-                {
-                    printf("clock_gettime failed\r\n");
-                    return;
-                }
 
-                // 初始統計時間
-                last_cktime = ec_DCtime;
-                while (!bg_cancel)
-                {
-                    // sleep直到指定的時間點
-                    const struct timespec cycletime = {0, PERIOD_NS};
-                    wakeup_time = timespec_add(wakeup_time, cycletime);
-                    int ret = clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &wakeup_time, NULL);
-                    if (ret)
-                    {
-                        // sleep錯誤處理
-                        printf("clock_nanosleep(): %s\n", strerror(ret));
-                        // break;
-                    }
+                cyclic_task();
 
-                    static int64 rt_check_time = 0;
-                    if (rt_check_time != clock_ms())
-                    {
-                        rt_check_time = clock_ms();
-                        // --------------------------------------------
-                        // console_fps("cyclic_task");
-                        cyclic_task();
-                        // --------------------------------------------
-                    }
-                }
                 inOP = FALSE;
             }
             else
@@ -559,7 +594,7 @@ OSAL_THREAD_FUNC keyboard(void *ptr)
             break;
         }
 
-        //printf("[keyboard] press (%c) (%d)\r\r\n", ch, ch);
+        // printf("[keyboard] press (%c) (%d)\r\r\n", ch, ch);
         osal_usleep(10000);
     }
 
@@ -585,8 +620,6 @@ int main(void)
     printf("SOEM (Simple Open EtherCAT Master)\r\ndelta io\r\n");
     /* create thread to handle slave error handling in OP */
     //      pthread_create( &thread1, NULL, (void *) &ecatcheck, (void*) &ctime);
-
-
 
     set_latency_target(); // 消除系统时钟偏移
     osal_thread_create(&bg_ecatcheck, 128000, &ecatcheck, (void *)&ctime);
