@@ -1,8 +1,4 @@
-// 線程 cpu 榜定
 #define _GNU_SOURCE
-#include <sched.h>
-#include <stdio.h>
-
 #include <errno.h>
 
 #include <stdlib.h>
@@ -20,24 +16,13 @@
 #include <unistd.h>
 #include <sys/resource.h>
 
+// 線程 cpu 榜定
+#include <sched.h>
+#include <stdio.h>
+
 // keyboard
 #include <termios.h> //PISOX中定义的标准接口
 #include <ctype.h>
-
-#include <stdio.h>
-#include <stdlib.h>
-#include <sys/time.h>
-#include <unistd.h>
-#include <string.h>
-#include <sys/time.h>
-#include <time.h>
-#include <pthread.h>
-#include <math.h>
-#include <sys/stat.h>
-#include <fcntl.h>
-#include <errno.h>
-#include <termios.h> 
-
 
 
 #include "ethercat.h"
@@ -55,7 +40,7 @@
 #define CPU_ID 4
 
 // RT Loop的週期
-#define PERIOD_NS (100000)
+#define PERIOD_NS (500000)
 #define NSEC_PER_SEC (1000000000)
 
 boolean bg_cancel = 0;
@@ -243,8 +228,8 @@ void cyclic_task()
     wkc = ec_receive_processdata(1);
     // int64 ck_time3 = clock_ns();
 
-    //int64 dc_time = ec_DCtime;
-     int64 dc_time = clock_ns();
+    int64 dc_time = ec_DCtime;
+    //int64 dc_time = clock_ns();
     int64 dt = dc_time - last_cktime;
     // int64 dt = ck_time2 - ck_time1;
     // int64 dt = ck_time3 - ck_time2;
