@@ -36,10 +36,10 @@
 #define EC_SLAVE_ID 1
 
 // 指定運行的CPU編號
-#define CPU_ID 4
+#define CPU_ID 7
 
 // RT Loop的週期
-#define PERIOD_NS (1000000)
+#define PERIOD_NS (1*1000*1000)
 
 boolean bg_cancel = 0;
 OSAL_THREAD_HANDLE bg_ecatcheck;
@@ -229,7 +229,8 @@ void ec_sync(int64 reftime, int64 cycletime, int64 *offsettime)
     static int64 integral = 0;
     int64 delta;
     /* set linux sync point 50us later than DC sync, just as example */
-    delta = (reftime - 50000) % cycletime;
+    delta = (reftime - 50*1000) % cycletime;
+    //delta = (reftime - 200*1000) % cycletime;
     if (delta > (cycletime / 2))
     {
         delta = delta - cycletime;
@@ -318,8 +319,9 @@ void cyclic_task()
         ec_send_processdata();
         int64 ck_time4 = clock_ns();
 
-        //dt = ck_time2 - ck_time1;
-        //dt = ck_time4 - ck_time3;
+        dt = ck_time2 - ck_time1; // ec rx 用時
+        //dt = ck_time4 - ck_time3; // ec tx 用時
+        //dt = ck_time4 - ck_time1; // 整體 用時
 
         cyc_count++;
         sum_dt += dt;
@@ -334,10 +336,10 @@ void cyclic_task()
         // 顯示
         EXEC_INTERVAL(100)
         {
-            consoler("cyc_count: %ld, Latency:(min, max, avg)us = (%ld, %ld, %.2f) T:%ldns ****",
+            consoler("cyc_count: %ld, Latency:(min, max, avg)us = (%ld, %ld, %.2f) T:%ld+(%3ld)ns ****",
                      cyc_count,
                      min_dt / 1000, max_dt / 1000, (double)sum_dt / cyc_count / 1000,
-                     ec_DCtime);
+                     ec_DCtime, toff);
         }
         EXEC_INTERVAL_END
 

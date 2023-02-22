@@ -332,7 +332,7 @@ void test_driver(char *ifname)
                /* 计算下一周期唤醒时间 */
                add_timespec(&ts, cycletime + toff);
                /* wait to cycle start */
-               clock_nanosleep(CLOCK_MONOTONeIC, TIMER_ABSTIME, &ts, NULL);
+               clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &ts, NULL);
                clock_gettime(CLOCK_MONOTONIC, &tnow);
                if (ec_slave[0].hasdc)
                {
@@ -463,7 +463,6 @@ void test_driver(char *ifname)
 // 检测键盘输入，如检测到esc即关闭SOEM退出程序
 OSAL_THREAD_FUNC scanKeyboard()
 {
-   int in;
    // int i;
    // Drive_Outputs *optr;
    struct sched_param schedp;
