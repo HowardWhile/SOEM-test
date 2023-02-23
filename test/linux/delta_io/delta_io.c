@@ -39,7 +39,7 @@
 #define CPU_ID 7
 
 // RT Loop的週期
-#define PERIOD_NS (1*1000*1000)
+#define PERIOD_NS (1 * 1000 * 1000)
 
 boolean bg_cancel = 0;
 OSAL_THREAD_HANDLE bg_ecatcheck;
@@ -93,6 +93,8 @@ void set_latency_target(void)
 // Priority
 int setPRICPUx(int Priority, int cpu_id)
 {
+    printf("[setPRICPUx] Priority= %d, cpu_id= %d\r\n", Priority, cpu_id);
+
     int ret = 0;
     // 指定 程序運作的cpu_id
     cpu_set_t mask;
@@ -108,7 +110,7 @@ int setPRICPUx(int Priority, int cpu_id)
     ret = sched_setscheduler(0, SCHED_FIFO, &schedp);
     if (ret)
     {
-        printf("Warning: sched_setscheduler failed: %s\r\n", strerror(errno));
+        printf("[setPRICPUx] Warning: sched_setscheduler failed: %s\r\n", strerror(errno));
         return ret;
     }
 
@@ -229,8 +231,8 @@ void ec_sync(int64 reftime, int64 cycletime, int64 *offsettime)
     static int64 integral = 0;
     int64 delta;
     /* set linux sync point 50us later than DC sync, just as example */
-    delta = (reftime - 50*1000) % cycletime;
-    //delta = (reftime - 200*1000) % cycletime;
+    delta = (reftime - 50 * 1000) % cycletime;
+    // delta = (reftime - 200*1000) % cycletime;
     if (delta > (cycletime / 2))
     {
         delta = delta - cycletime;
@@ -246,8 +248,61 @@ void ec_sync(int64 reftime, int64 cycletime, int64 *offsettime)
     *offsettime = -(delta / 100) - (integral / 20);
 }
 
+void cyclic_test()
+{
+    // ----------------------------------------------------
+    // real-time 定時器
+    // ----------------------------------------------------
+    printf("[%ld ms] Starting RT task with dt=%u ns.\r\n", clock_ms(), PERIOD_NS);
+    const int64 cycletime = PERIOD_NS; /* cycletime in ns */
+
+    struct timespec wakeup_time;
+    if (clock_gettime(CLOCK_MONOTONIC, &wakeup_time) == -1) // 當前的精準時間
+    {
+        printf("clock_gettime failed\r\n");
+        return;
+    }
+
+    int64 dt;
+    struct timespec tnow;
+
+    while (!bg_cancel)
+    {
+        // sleep直到指定的時間點
+        add_timespec(&wakeup_time, cycletime);
+        int ret = clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &wakeup_time, NULL);
+        if (ret)
+        {
+            // sleep錯誤處理
+            printf("clock_nanosleep(): %s\n", strerror(ret));
+            // break;
+        }
+
+        clock_gettime(CLOCK_MONOTONIC, &tnow);
+        dt = calcdiff_ns(tnow, wakeup_time);
+
+        cyc_count++;
+        sum_dt += dt;
+
+        if (dt < min_dt)
+            min_dt = dt;
+
+        if (dt > max_dt)
+            max_dt = dt;
+
+        // 顯示
+        EXEC_INTERVAL(100)
+        {
+            consoler("cyc_count: %ld, Latency:(min, max, avg)us = (%ld, %ld, %.2f) ****",
+                     cyc_count,
+                     min_dt / 1000, max_dt / 1000, (double)sum_dt / cyc_count / 1000);
+        }
+        EXEC_INTERVAL_END
+    }
+}
+
 void cyclic_task()
-{ 
+{
     // ----------------------------------------------------
     // real-time 定時器
     // ----------------------------------------------------
@@ -320,8 +375,8 @@ void cyclic_task()
         int64 ck_time4 = clock_ns();
 
         dt = ck_time2 - ck_time1; // ec rx 用時
-        //dt = ck_time4 - ck_time3; // ec tx 用時
-        //dt = ck_time4 - ck_time1; // 整體 用時
+        // dt = ck_time4 - ck_time3; // ec tx 用時
+        // dt = ck_time4 - ck_time1; // 整體 用時
 
         cyc_count++;
         sum_dt += dt;
@@ -331,7 +386,6 @@ void cyclic_task()
 
         if (dt > max_dt)
             max_dt = dt;
-
 
         // 顯示
         EXEC_INTERVAL(100)
@@ -370,6 +424,9 @@ void simpletest(char *ifname)
     inOP = FALSE;
 
     printf("Starting simple test\r\n");
+    // 設定程式優先權
+    setPRICPUx(99, CPU_ID); // -99=RT
+    setNI(-20);
 
     /* initialise SOEM, bind socket to ifname */
     if (ec_init(ifname))
@@ -431,6 +488,7 @@ void simpletest(char *ifname)
                 inOP = TRUE;
 
                 cyclic_task();
+                // cyclic_test();
 
                 inOP = FALSE;
             }
@@ -468,9 +526,9 @@ void simpletest(char *ifname)
 
 OSAL_THREAD_FUNC ecatcheck(void *ptr)
 {
+    printf("[ecatcheck]\r\n");
     int slave;
     (void)ptr; /* Not used */
-
     // 設定程式優先權
     setPRICPUx(20, CPU_ID); //
 
@@ -550,6 +608,8 @@ OSAL_THREAD_FUNC ecatcheck(void *ptr)
 
 OSAL_THREAD_FUNC keyboard(void *ptr)
 {
+    printf("[keyboard]\r\n");
+
     (void)ptr; /* Not used */
 
     // 設定程式優先權
@@ -634,10 +694,6 @@ int main(void)
     sa.sa_flags = 0;
     if (sigaction(SIGINT, &sa, NULL) == -1)
         printf("Failed to caught signal\r\n");
-
-    // 設定程式優先權
-    setPRICPUx(99, CPU_ID); // -99=RT
-    setNI(-20);
 
     /* start cyclic part */
     simpletest(ETH_CH_NAME);
