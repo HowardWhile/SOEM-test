@@ -36,7 +36,7 @@
 #define EC_SLAVE_ID 1
 
 // 指定運行的CPU編號
-#define CPU_ID 7
+#define CPU_ID -1
 
 // RT Loop的週期
 #define PERIOD_NS (1 * 1000 * 1000)
