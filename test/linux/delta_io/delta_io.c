@@ -374,7 +374,7 @@ void cyclic_task()
         ec_send_processdata();
         int64 ck_time4 = clock_ns();
 
-        dt = ck_time2 - ck_time1; // ec rx 用時
+        // dt = ck_time2 - ck_time1; // ec rx 用時
         // dt = ck_time4 - ck_time3; // ec tx 用時
         // dt = ck_time4 - ck_time1; // 整體 用時
 
