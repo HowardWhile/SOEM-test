@@ -36,11 +36,10 @@
 #define EC_SLAVE_ID 1
 
 // 指定運行的CPU編號
-#define CPU_ID 7
+#define CPU_ID -1
 
 // RT Loop的週期
-#define PERIOD_NS (1 * 1000 * 1000) // 1ms
-//#define PERIOD_NS (500 * 1000) // 500u
+#define PERIOD_NS (1 * 1000 * 1000)
 
 boolean bg_cancel = 0;
 OSAL_THREAD_HANDLE bg_ecatcheck;
@@ -49,6 +48,7 @@ OSAL_THREAD_HANDLE bg_keyboard;
 boolean dynamicY = FALSE;
 
 char IOmap[4096];
+boolean DO[32];
 
 int expectedWKC;
 boolean needlf;
@@ -61,6 +61,11 @@ int64 max_dt = LLONG_MIN;
 int64 min_dt = LLONG_MAX;
 int64 sum_dt = 0;
 int64 cyc_count = 0;
+
+static int sdo_write8(uint16 slave, uint16 index, uint8 subindex, uint8 value)
+{
+    return ec_SDOwrite(slave, index, subindex, FALSE, sizeof(uint8), &value, EC_TIMEOUTRXM);
+}
 
 /* 消除系统时钟偏移函数，取自cyclic_test */
 void set_latency_target(void)
@@ -127,6 +132,74 @@ int setNI(int Niceness)
     return ret;
 }
 
+int setupDeltaIO(void)
+
+{
+    int slave = EC_SLAVE_ID;
+    int wkc = 0;
+    printf("[slave:%d] DELTA RC-EC0902 setup\r\n", slave);
+
+    // Active all DO port ----------------------------------------------------------
+    // 此物件可以設定輸出通道是否允許變更(8 個輸出通道為一組)。0 代表不允許改變狀態，1 代表允許改變狀態。
+    //    Index: 2001 Datatype: 002a Objectcode: 09 Name: Active DO Enable
+    //    Sub: 00 Datatype: 0005 Bitlength: 0008 Obj.access: 0007 Name: SubIndex 000
+    //             Value :0x04 4
+    //    Sub: 01 Datatype: 0005 Bitlength: 0008 Obj.access: 003f Name: Active Port2 DO CH0~7 Enable
+    //             Value :0x00 0
+    //    Sub: 02 Datatype: 0005 Bitlength: 0008 Obj.access: 003f Name: Active Port2 DO CH8~15 Enable
+    //             Value :0x00 0
+    //    Sub: 03 Datatype: 0005 Bitlength: 0008 Obj.access: 003f Name: Active Port3 DO CH0~7 Enable
+    //             Value :0x00 0
+    //    Sub: 04 Datatype: 0005 Bitlength: 0008 Obj.access: 003f Name: Active Port3 DO CH8~15 Enable
+    //             Value :0x00 0
+    wkc += sdo_write8(EC_SLAVE_ID, 0x2001, 1, 0xFF);
+    wkc += sdo_write8(EC_SLAVE_ID, 0x2001, 2, 0xFF);
+    wkc += sdo_write8(EC_SLAVE_ID, 0x2001, 3, 0xFF);
+    wkc += sdo_write8(EC_SLAVE_ID, 0x2001, 4, 0xFF);
+
+    // Error Mode disable ----------------------------------------------------------
+    // 0 代表維持原本輸出值，1 代表參考Error Mode Output Value(6207h)的設定值。
+    //    Index: 6206 Datatype: 002a Objectcode: 09 Name: DO Error Mode Enable
+    //    Sub: 00 Datatype: 0005 Bitlength: 0008 Obj.access: 0007 Name: SubIndex 000
+    //             Value :0x04 4
+    //    Sub: 01 Datatype: 0005 Bitlength: 0008 Obj.access: 003f Name: Port2 DO Ch0~7 Error Mode Enable
+    //             Value :0xff 255
+    //    Sub: 02 Datatype: 0005 Bitlength: 0008 Obj.access: 003f Name: Port2 DO Ch8~15 Error Mode Enable
+    //             Value :0xff 255
+    //    Sub: 03 Datatype: 0005 Bitlength: 0008 Obj.access: 003f Name: Port3 DO Ch0~7 Error Mode Enable
+    //             Value :0xff 255
+    //    Sub: 04 Datatype: 0005 Bitlength: 0008 Obj.access: 003f Name: Port3 DO Ch8~15 Error Mode Enable
+    //             Value :0xff 255
+    wkc += sdo_write8(EC_SLAVE_ID, 0x6206, 1, 0x0);
+    wkc += sdo_write8(EC_SLAVE_ID, 0x6206, 2, 0x0);
+    wkc += sdo_write8(EC_SLAVE_ID, 0x6206, 3, 0x0);
+    wkc += sdo_write8(EC_SLAVE_ID, 0x6206, 4, 0x0);
+
+    // strncpy(ec_slave[slave].name, "IO", EC_MAXNAME);
+
+    if (wkc != 8)
+    {
+        printf("[slave:%d] setup failed\r\nwkc: %d\r\n", slave, wkc);
+        return -1;
+    }
+    else
+    {
+        printf("[slave:%d] DELTA RC-EC0902 setup succeed.\r\n", slave);
+        return 0;
+    }
+}
+
+void modifyBit(uint8 *value, int p, boolean bit)
+{
+    int mask = 1 << p;
+    *value = ((*value & ~mask) | (bit << p));
+}
+
+boolean getBit(uint8 *value, int p)
+{
+    return (*value >> p) & 1;
+}
+
 static inline int64_t calcdiff_ns(struct timespec t1, struct timespec t2)
 {
     int64_t tdiff;
@@ -141,13 +214,13 @@ void add_timespec(struct timespec *ts, int64 addtime)
     int64 sec, nsec;
 
     nsec = addtime % NSEC_PER_SEC;
-    sec = (addtime) / NSEC_PER_SEC;
+    sec = (addtime - nsec) / NSEC_PER_SEC;
     ts->tv_sec += sec;
     ts->tv_nsec += nsec;
     if (ts->tv_nsec > NSEC_PER_SEC)
     {
         nsec = ts->tv_nsec % NSEC_PER_SEC;
-        ts->tv_sec += (ts->tv_nsec) / NSEC_PER_SEC;
+        ts->tv_sec += (ts->tv_nsec - nsec) / NSEC_PER_SEC;
         ts->tv_nsec = nsec;
     }
 }
@@ -159,7 +232,6 @@ void ec_sync(int64 reftime, int64 cycletime, int64 *offsettime)
     int64 delta;
     /* set linux sync point 50us later than DC sync, just as example */
     delta = (reftime - 50 * 1000) % cycletime;
-    //delta = (reftime + 200 * 1000) % cycletime;
     // delta = (reftime - 200*1000) % cycletime;
     if (delta > (cycletime / 2))
     {
@@ -181,8 +253,7 @@ void cyclic_test()
     // ----------------------------------------------------
     // real-time 定時器
     // ----------------------------------------------------
-    console("Starting RT task with dt=%u ns", PERIOD_NS);   
-
+    printf("[%ld ms] Starting RT task with dt=%u ns.\r\n", clock_ms(), PERIOD_NS);
     const int64 cycletime = PERIOD_NS; /* cycletime in ns */
 
     struct timespec wakeup_time;
@@ -232,13 +303,10 @@ void cyclic_test()
 
 void cyclic_task()
 {
-
-
     // ----------------------------------------------------
     // real-time 定時器
     // ----------------------------------------------------
-    console("Starting RT task with dt=%u ns", PERIOD_NS);
-    console("press 'r' reset count, 'q' exit...\r\n");
+    printf("[%ld ms] Starting RT task with dt=%u ns.\r\n", clock_ms(), PERIOD_NS);
     const int64 cycletime = PERIOD_NS; /* cycletime in ns */
 
     struct timespec wakeup_time;
@@ -279,7 +347,32 @@ void cyclic_task()
         }
 
         wkc = ec_receive_processdata(EC_TIMEOUTRET);
+
+        // 開關所有的Y
+        if (dynamicY && cyc_count % 100 == 0)
+        {
+            for (size_t idx = 0; idx < 32; idx++)
+            {
+                DO[idx] = !DO[idx];
+            }
+        }
+
+        // ------------------------------------
+        // update output
+        // ------------------------------------
+        for (size_t idx_bit = 0; idx_bit < 8; idx_bit++)
+        {
+            modifyBit(&ec_slave[EC_SLAVE_ID].outputs[0], idx_bit, DO[0 * 8 + idx_bit]);
+            modifyBit(&ec_slave[EC_SLAVE_ID].outputs[1], idx_bit, DO[1 * 8 + idx_bit]);
+            modifyBit(&ec_slave[EC_SLAVE_ID].outputs[2], idx_bit, DO[2 * 8 + idx_bit]);
+            modifyBit(&ec_slave[EC_SLAVE_ID].outputs[3], idx_bit, DO[3 * 8 + idx_bit]);
+        }
+
         ec_send_processdata();
+
+        // dt = ck_time2 - ck_time1; // ec rx 用時
+        // dt = ck_time4 - ck_time3; // ec tx 用時
+        // dt = ck_time4 - ck_time1; // 整體 用時
 
         cyc_count++;
         sum_dt += dt;
@@ -320,7 +413,6 @@ void cyclic_task()
     }
 }
 
-
 void simpletest(char *ifname)
 {
     int i, oloop, iloop, chk;
@@ -340,6 +432,11 @@ void simpletest(char *ifname)
         if (ec_config_init(FALSE) > 0)
         {
             printf("%d slaves found and configured.\r\n", ec_slavecount);
+
+            while (setupDeltaIO())
+                usleep(100);
+
+            memset(DO, 0, sizeof(DO));
 
             ec_config_map(&IOmap);
             ec_configdc();
@@ -386,8 +483,8 @@ void simpletest(char *ifname)
                 printf("Operational state reached for all slaves.\r\n");
                 inOP = TRUE;
 
-                //cyclic_test();
                 cyclic_task();
+                // cyclic_test();
 
                 inOP = FALSE;
             }
@@ -429,8 +526,7 @@ OSAL_THREAD_FUNC ecatcheck(void *ptr)
     int slave;
     (void)ptr; /* Not used */
     // 設定程式優先權
-    //setPRICPUx(20, CPU_ID); //
-  
+    setPRICPUx(20, CPU_ID); //
 
     while (!bg_cancel)
     {
@@ -513,7 +609,8 @@ OSAL_THREAD_FUNC keyboard(void *ptr)
     (void)ptr; /* Not used */
 
     // 設定程式優先權
-    //setPRICPUx(21, CPU_ID); //
+    setPRICPUx(21, CPU_ID); //
+
     struct termios new_settings;
     struct termios stored_settings;
 
@@ -532,6 +629,12 @@ OSAL_THREAD_FUNC keyboard(void *ptr)
         tcsetattr(0, TCSANOW, &new_settings);
         ch = getchar();
         tcsetattr(0, TCSANOW, &stored_settings);
+
+        if (isdigit(ch))
+        {
+            int idx = ch - '0';
+            DO[idx] = !DO[idx];
+        }
 
         switch (ch)
         {
@@ -573,9 +676,6 @@ int main(void)
 {
 
     printf("SOEM (Simple Open EtherCAT Master)\r\ndelta io\r\n");
-
-    console("cyclic_test...");
-
     /* create thread to handle slave error handling in OP */
     //      pthread_create( &thread1, NULL, (void *) &ecatcheck, (void*) &ctime);
 
