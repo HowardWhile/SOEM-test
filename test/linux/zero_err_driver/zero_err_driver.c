@@ -111,7 +111,7 @@ int setPRICPUx(int Priority, int cpu_id)
     ret = sched_setscheduler(0, SCHED_FIFO, &schedp);
     if (ret)
     {
-        console("[setPRICPUx] Warning: sched_setscheduler failed: %s\r\n", strerror(errno));
+        console("[setPRICPUx] Warning: sched_setscheduler failed: %s", strerror(errno));
     }
 
     return ret;
@@ -413,7 +413,7 @@ void cyclic_task()
 
 void simpletest(char *ifname)
 {
-    int i, oloop, iloop, chk;
+    int i, oloop, iloop;
     needlf = FALSE;
     inOP = FALSE;
 
@@ -467,24 +467,48 @@ void simpletest(char *ifname)
             ec_send_processdata();
             ec_receive_processdata(EC_TIMEOUTRET);
 
-            /* request OP state for all slaves */
+            /* request OP state for all slaves */            
             ec_writestate(0);
 
-            chk = 200;
-            /* wait for all slaves to reach OP state */
-            do
-            {
-                ec_writestate(0);
+            ec_send_processdata();
+            ec_receive_processdata(EC_TIMEOUTRET);
 
-                ec_send_processdata();
-                ec_receive_processdata(EC_TIMEOUTRET);
-                ec_statecheck(0, EC_STATE_OPERATIONAL, EC_TIMEOUTSTATE);
-                console("wait for all slaves to reach OP state %d", chk);
-            } while (chk-- && (ec_slave[0].state != EC_STATE_OPERATIONAL) && !bg_cancel);
+            /* wait for all slaves to reach OP state */
+            consoler("wait for all slaves to reach OP state");
+            int64 ck_time = clock_ms();
+            int64 k_timeout = 3000; // 3s;
+            while ( !bg_cancel && (ec_statecheck(0, EC_STATE_OPERATIONAL, EC_TIMEOUTRET) != EC_STATE_OPERATIONAL) )
+            {
+                int64 dt = clock_ms() - ck_time;
+                if(dt > k_timeout)
+                {
+                    printf(RED"Timeout\r\n"RESET);
+                    break;
+                }
+                consoler("wait for all slaves to reach OP state (%.1fs)...", (float32)(k_timeout - dt)/1000 );
+
+            }
+            printf("\r\n");
+
+            // do
+            // {
+            //     ec_writestate(0);
+            //     ec_send_processdata();
+            //     ec_receive_processdata(EC_TIMEOUTRET);
+            //     ec_statecheck(0, EC_STATE_OPERATIONAL, EC_TIMEOUTRET*10);
+
+            //     int64 dt = clock_ms() - ck_time;
+            //     consoler("wait for all slaves to reach OP state %3ld ...", clock_ms() - ck_time );
+            //     if(dt > k_timeout)
+            //     {
+            //         printf("timeout\r\n");
+            //         break;
+            //     }
+            // } while (ec_slave[0].state != EC_STATE_OPERATIONAL && !bg_cancel);
 
             if (ec_slave[0].state == EC_STATE_OPERATIONAL)
             {
-                printf("Operational state reached for all slaves.\r\n");
+                console("Operational state reached for all slaves.");
                 inOP = TRUE;
 
                 cyclic_task();
@@ -494,27 +518,28 @@ void simpletest(char *ifname)
             }
             else
             {
-                printf("Not all slaves reached operational state.\r\n");
+                console("Not all slaves reached operational state.");
                 ec_readstate();
                 for (i = 1; i <= ec_slavecount; i++)
                 {
                     if (ec_slave[i].state != EC_STATE_OPERATIONAL)
                     {
-                        printf("Slave %d State=0x%2.2x StatusCode=0x%4.4x : %s\r\n",
+                        console("Slave %d State=0x%2.2x StatusCode=0x%4.4x : %s",
                                i, ec_slave[i].state, ec_slave[i].ALstatuscode, ec_ALstatuscode2string(ec_slave[i].ALstatuscode));
                     }
                 }
             }
-            printf("\r\nRequest init state for all slaves\r\n");
+            console("[Exit] Request init state for all slaves");
             ec_slave[0].state = EC_STATE_INIT;
             /* request INIT state for all slaves */
             ec_writestate(0);
         }
         else
         {
-            printf("No slaves found!\r\n");
+            console("No slaves found!\r\n");
         }
-        printf("End simple test, close socket\r\n");
+
+        console("[Exit] close socket\r\n");
         /* stop SOEM, close socket */
         ec_close();
     }
@@ -651,6 +676,10 @@ OSAL_THREAD_FUNC keyboard(void *ptr)
             sum_dt = 0;
             cyc_count = 0;
             break;
+        case 'q':
+            printf("\r\n");
+            bg_cancel = 1;
+            break;
 
         default:
             break;
@@ -660,7 +689,6 @@ OSAL_THREAD_FUNC keyboard(void *ptr)
         osal_usleep(10000);
     }
 
-    bg_cancel = 1;
     return;
 }
 
@@ -694,14 +722,22 @@ int main(void)
     /* create thread to handle slave error handling in OP */
     //      pthread_create( &thread1, NULL, (void *) &ecatcheck, (void*) &ctime);
 
+
+    printf("%s\r\n", clock_now());
+
+
     set_latency_target(); // 消除系统时钟偏移
-    osal_thread_create(&bg_ecatcheck, 128000, &ecatcheck, (void *)&ctime);
+
     osal_thread_create(&bg_keyboard, 2048, &keyboard, (void *)&ctime);
+    usleep(100);
+
+    osal_thread_create(&bg_ecatcheck, 128000, &ecatcheck, (void *)&ctime);
+    usleep(100);
 
     signal_init(); // 攔截 ctrl + C 事件
 
     /* start cyclic part */
-    usleep(10000);
+    usleep(100);
     simpletest(ETH_CH_NAME);
 
     console("End program");
