@@ -33,10 +33,10 @@
 #define ETH_CH_NAME "eno1"
 
 // Slave的站號
-#define EC_SLAVE_ID 1
+#define EC_SLAVE_ID_DELTA_IO 1
 
 // 指定運行的CPU編號
-#define CPU_ID -1
+#define CPU_ID 7
 
 // RT Loop的週期
 #define PERIOD_NS (1 * 1000 * 1000)
@@ -67,7 +67,7 @@ static int sdo_write8(uint16 slave, uint16 index, uint8 subindex, uint8 value)
     return ec_SDOwrite(slave, index, subindex, FALSE, sizeof(uint8), &value, EC_TIMEOUTRXM);
 }
 
-/* 消除系统时钟偏移函数，取自cyclic_test */
+/* ref: cyclic_test */
 void set_latency_target(void)
 {
     struct stat s;
@@ -87,13 +87,14 @@ void set_latency_target(void)
             close(latency_target_fd);
             return;
         }
-        printf("# /dev/cpu_dma_latency set to %dus\r\n", latency_target_value);
+        console("/dev/cpu_dma_latency set to %dus", latency_target_value);
     }
 }
+
 // Priority
 int setPRICPUx(int Priority, int cpu_id)
 {
-    printf("[setPRICPUx] Priority= %d, cpu_id= %d\r\n", Priority, cpu_id);
+    //printf("[setPRICPUx] Priority= %d, cpu_id= %d\r\n", Priority, cpu_id);
 
     int ret = 0;
     // 指定 程序運作的cpu_id
@@ -110,8 +111,7 @@ int setPRICPUx(int Priority, int cpu_id)
     ret = sched_setscheduler(0, SCHED_FIFO, &schedp);
     if (ret)
     {
-        printf("[setPRICPUx] Warning: sched_setscheduler failed: %s\r\n", strerror(errno));
-        return ret;
+        console("[setPRICPUx] Warning: sched_setscheduler failed: %s\r\n", strerror(errno));
     }
 
     return ret;
@@ -132,12 +132,10 @@ int setNI(int Niceness)
     return ret;
 }
 
-int setupDeltaIO(void)
-
+int setupDeltaIO(int slave)
 {
-    int slave = EC_SLAVE_ID;
     int wkc = 0;
-    printf("[slave:%d] DELTA RC-EC0902 setup\r\n", slave);
+    console("[slave:%d] DELTA RC-EC0902 setup", slave);
 
     // Active all DO port ----------------------------------------------------------
     // 此物件可以設定輸出通道是否允許變更(8 個輸出通道為一組)。0 代表不允許改變狀態，1 代表允許改變狀態。
@@ -152,10 +150,10 @@ int setupDeltaIO(void)
     //             Value :0x00 0
     //    Sub: 04 Datatype: 0005 Bitlength: 0008 Obj.access: 003f Name: Active Port3 DO CH8~15 Enable
     //             Value :0x00 0
-    wkc += sdo_write8(EC_SLAVE_ID, 0x2001, 1, 0xFF);
-    wkc += sdo_write8(EC_SLAVE_ID, 0x2001, 2, 0xFF);
-    wkc += sdo_write8(EC_SLAVE_ID, 0x2001, 3, 0xFF);
-    wkc += sdo_write8(EC_SLAVE_ID, 0x2001, 4, 0xFF);
+    wkc += sdo_write8(slave, 0x2001, 1, 0xFF);
+    wkc += sdo_write8(slave, 0x2001, 2, 0xFF);
+    wkc += sdo_write8(slave, 0x2001, 3, 0xFF);
+    wkc += sdo_write8(slave, 0x2001, 4, 0xFF);
 
     // Error Mode disable ----------------------------------------------------------
     // 0 代表維持原本輸出值，1 代表參考Error Mode Output Value(6207h)的設定值。
@@ -170,21 +168,21 @@ int setupDeltaIO(void)
     //             Value :0xff 255
     //    Sub: 04 Datatype: 0005 Bitlength: 0008 Obj.access: 003f Name: Port3 DO Ch8~15 Error Mode Enable
     //             Value :0xff 255
-    wkc += sdo_write8(EC_SLAVE_ID, 0x6206, 1, 0x0);
-    wkc += sdo_write8(EC_SLAVE_ID, 0x6206, 2, 0x0);
-    wkc += sdo_write8(EC_SLAVE_ID, 0x6206, 3, 0x0);
-    wkc += sdo_write8(EC_SLAVE_ID, 0x6206, 4, 0x0);
+    wkc += sdo_write8(slave, 0x6206, 1, 0x0);
+    wkc += sdo_write8(slave, 0x6206, 2, 0x0);
+    wkc += sdo_write8(slave, 0x6206, 3, 0x0);
+    wkc += sdo_write8(slave, 0x6206, 4, 0x0);
 
     // strncpy(ec_slave[slave].name, "IO", EC_MAXNAME);
 
     if (wkc != 8)
     {
-        printf("[slave:%d] setup failed\r\nwkc: %d\r\n", slave, wkc);
+        console("[slave:%d] setup failed\r\nwkc: %d", slave, wkc);
         return -1;
     }
     else
     {
-        printf("[slave:%d] DELTA RC-EC0902 setup succeed.\r\n", slave);
+        console("[slave:%d] DELTA RC-EC0902 setup succeed.", slave);
         return 0;
     }
 }
@@ -253,7 +251,7 @@ void cyclic_test()
     // ----------------------------------------------------
     // real-time 定時器
     // ----------------------------------------------------
-    printf("[%ld ms] Starting RT task with dt=%u ns.\r\n", clock_ms(), PERIOD_NS);
+    console("[%ld ms] Starting RT task with dt=%u ns.", clock_ms(), PERIOD_NS);
     const int64 cycletime = PERIOD_NS; /* cycletime in ns */
 
     struct timespec wakeup_time;
@@ -362,10 +360,10 @@ void cyclic_task()
         // ------------------------------------
         for (size_t idx_bit = 0; idx_bit < 8; idx_bit++)
         {
-            modifyBit(&ec_slave[EC_SLAVE_ID].outputs[0], idx_bit, DO[0 * 8 + idx_bit]);
-            modifyBit(&ec_slave[EC_SLAVE_ID].outputs[1], idx_bit, DO[1 * 8 + idx_bit]);
-            modifyBit(&ec_slave[EC_SLAVE_ID].outputs[2], idx_bit, DO[2 * 8 + idx_bit]);
-            modifyBit(&ec_slave[EC_SLAVE_ID].outputs[3], idx_bit, DO[3 * 8 + idx_bit]);
+            modifyBit(&ec_slave[EC_SLAVE_ID_DELTA_IO].outputs[0], idx_bit, DO[0 * 8 + idx_bit]);
+            modifyBit(&ec_slave[EC_SLAVE_ID_DELTA_IO].outputs[1], idx_bit, DO[1 * 8 + idx_bit]);
+            modifyBit(&ec_slave[EC_SLAVE_ID_DELTA_IO].outputs[2], idx_bit, DO[2 * 8 + idx_bit]);
+            modifyBit(&ec_slave[EC_SLAVE_ID_DELTA_IO].outputs[3], idx_bit, DO[3 * 8 + idx_bit]);
         }
 
         ec_send_processdata();
@@ -419,21 +417,24 @@ void simpletest(char *ifname)
     needlf = FALSE;
     inOP = FALSE;
 
-    printf("Starting simple test\r\n");
-    // 設定程式優先權
-    setPRICPUx(99, CPU_ID); // -99=RT
+    console("main work start...");
+
+    // 設定程式搶佔優先權到最高
+    console("Priority= RT, NI=-20 cpu_id= %d", CPU_ID);
+    setPRICPUx(99, CPU_ID); // 99=RT
     setNI(-20);
+
 
     /* initialise SOEM, bind socket to ifname */
     if (ec_init(ifname))
     {
-        printf("ec_init on %s succeeded.\r\n", ifname);
+        console("ec_init on %s succeeded.", ifname);
         /* find and auto-config slaves */
         if (ec_config_init(FALSE) > 0)
         {
-            printf("%d slaves found and configured.\r\n", ec_slavecount);
+            console("%d slaves found and configured.\r\n", ec_slavecount);
 
-            while (setupDeltaIO())
+            while (setupDeltaIO(EC_SLAVE_ID_DELTA_IO))
                 usleep(100);
 
             memset(DO, 0, sizeof(DO));
@@ -473,10 +474,13 @@ void simpletest(char *ifname)
             /* wait for all slaves to reach OP state */
             do
             {
+                ec_writestate(0);
+
                 ec_send_processdata();
                 ec_receive_processdata(EC_TIMEOUTRET);
-                ec_statecheck(0, EC_STATE_OPERATIONAL, 50000);
-            } while (chk-- && (ec_slave[0].state != EC_STATE_OPERATIONAL));
+                ec_statecheck(0, EC_STATE_OPERATIONAL, EC_TIMEOUTSTATE);
+                console("wait for all slaves to reach OP state %d", chk);
+            } while (chk-- && (ec_slave[0].state != EC_STATE_OPERATIONAL) && !bg_cancel);
 
             if (ec_slave[0].state == EC_STATE_OPERATIONAL)
             {
@@ -522,7 +526,7 @@ void simpletest(char *ifname)
 
 OSAL_THREAD_FUNC ecatcheck(void *ptr)
 {
-    printf("[ecatcheck]\r\n");
+    console("[Thread] ecatcheck start");
     int slave;
     (void)ptr; /* Not used */
     // 設定程式優先權
@@ -547,13 +551,13 @@ OSAL_THREAD_FUNC ecatcheck(void *ptr)
                     ec_group[currentgroup].docheckstate = TRUE;
                     if (ec_slave[slave].state == (EC_STATE_SAFE_OP + EC_STATE_ERROR))
                     {
-                        printf("ERROR : slave %d is in SAFE_OP + ERROR, attempting ack.\r\n", slave);
+                        printf("\r\n ERROR : slave %d is in SAFE_OP + ERROR, attempting ack.\r\n", slave);
                         ec_slave[slave].state = (EC_STATE_SAFE_OP + EC_STATE_ACK);
                         ec_writestate(slave);
                     }
                     else if (ec_slave[slave].state == EC_STATE_SAFE_OP)
                     {
-                        printf("WARNING : slave %d is in SAFE_OP, change to OPERATIONAL.\r\n", slave);
+                        printf("\r\n WARNING : slave %d is in SAFE_OP, change to OPERATIONAL.\r\n", slave);
                         ec_slave[slave].state = EC_STATE_OPERATIONAL;
                         ec_writestate(slave);
                     }
@@ -562,7 +566,7 @@ OSAL_THREAD_FUNC ecatcheck(void *ptr)
                         if (ec_reconfig_slave(slave, EC_TIMEOUTMON))
                         {
                             ec_slave[slave].islost = FALSE;
-                            printf("MESSAGE : slave %d reconfigured\r\n", slave);
+                            printf("\r\n MESSAGE : slave %d reconfigured\r\n", slave);
                         }
                     }
                     else if (!ec_slave[slave].islost)
@@ -572,7 +576,7 @@ OSAL_THREAD_FUNC ecatcheck(void *ptr)
                         if (ec_slave[slave].state == EC_STATE_NONE)
                         {
                             ec_slave[slave].islost = TRUE;
-                            printf("ERROR : slave %d lost\r\n", slave);
+                            printf("\r\n ERROR : slave %d lost\r\n", slave);
                         }
                     }
                 }
@@ -583,18 +587,18 @@ OSAL_THREAD_FUNC ecatcheck(void *ptr)
                         if (ec_recover_slave(slave, EC_TIMEOUTMON))
                         {
                             ec_slave[slave].islost = FALSE;
-                            printf("MESSAGE : slave %d recovered\r\n", slave);
+                            printf("\r\n MESSAGE : slave %d recovered\r\n", slave);
                         }
                     }
                     else
                     {
                         ec_slave[slave].islost = FALSE;
-                        printf("MESSAGE : slave %d found\r\n", slave);
+                        printf("\r\n MESSAGE : slave %d found\r\n", slave);
                     }
                 }
             }
             if (!ec_group[currentgroup].docheckstate)
-                printf("OK : all slaves resumed OPERATIONAL.\r\n");
+                printf("\r\n OK : all slaves resumed OPERATIONAL.\r\n");
         }
         osal_usleep(10000);
     }
@@ -604,7 +608,7 @@ OSAL_THREAD_FUNC ecatcheck(void *ptr)
 
 OSAL_THREAD_FUNC keyboard(void *ptr)
 {
-    printf("[keyboard]\r\n");
+    console("[Thread] keyboard start");
 
     (void)ptr; /* Not used */
 
@@ -671,18 +675,8 @@ void signal_handler(int signum)
     }
 }
 
-// int main(int argc, char *argv[])
-int main(void)
+void signal_init()
 {
-
-    printf("SOEM (Simple Open EtherCAT Master)\r\ndelta io\r\n");
-    /* create thread to handle slave error handling in OP */
-    //      pthread_create( &thread1, NULL, (void *) &ecatcheck, (void*) &ctime);
-
-    set_latency_target(); // 消除系统时钟偏移
-    osal_thread_create(&bg_ecatcheck, 128000, &ecatcheck, (void *)&ctime);
-    osal_thread_create(&bg_keyboard, 2048, &keyboard, (void *)&ctime);
-
     // 攔截 ctrl + C 事件
     struct sigaction sa;
     sa.sa_handler = signal_handler;
@@ -690,11 +684,27 @@ int main(void)
     sa.sa_flags = 0;
     if (sigaction(SIGINT, &sa, NULL) == -1)
         printf("Failed to caught signal\r\n");
+}
+
+// int main(int argc, char *argv[])
+int main(void)
+{
+    console("SOEM (Simple Open EtherCAT Master)");
+    console("zero_err_driver start");
+    /* create thread to handle slave error handling in OP */
+    //      pthread_create( &thread1, NULL, (void *) &ecatcheck, (void*) &ctime);
+
+    set_latency_target(); // 消除系统时钟偏移
+    osal_thread_create(&bg_ecatcheck, 128000, &ecatcheck, (void *)&ctime);
+    osal_thread_create(&bg_keyboard, 2048, &keyboard, (void *)&ctime);
+
+    signal_init(); // 攔截 ctrl + C 事件
 
     /* start cyclic part */
+    usleep(10000);
     simpletest(ETH_CH_NAME);
 
-    printf("End program\r\n");
+    console("End program");
 
     return (0);
 }
