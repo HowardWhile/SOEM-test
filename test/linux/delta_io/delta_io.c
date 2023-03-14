@@ -29,14 +29,17 @@
 
 #define EC_TIMEOUTMON 500
 
-// 通訊用的eth設備名稱
-#define ETH_CH_NAME "eno1"
-
+// -------------------------------------
+// 設備定義
+// -------------------------------------
+#define ETH_CH_NAME "eno1" // 通訊用的eth設備名稱
 // Slave的站號
-#define EC_SLAVE_ID 1
+#define R2_EC0902 1
+#define NUMBER_OF_SLAVES 1
+// -------------------------------------
+// -------------------------------------
 
-// 指定運行的CPU編號
-#define CPU_ID -1
+#define CPU_ID 7 // 指定運行的CPU編號
 
 // RT Loop的週期
 #define PERIOD_NS (1 * 1000 * 1000)
@@ -47,6 +50,7 @@ OSAL_THREAD_HANDLE bg_keyboard;
 
 boolean dynamicY = FALSE;
 
+int usedmem;
 char IOmap[4096];
 boolean DO[32];
 
@@ -62,12 +66,26 @@ int64 min_dt = LLONG_MAX;
 int64 sum_dt = 0;
 int64 cyc_count = 0;
 
+
 static int sdo_write8(uint16 slave, uint16 index, uint8 subindex, uint8 value)
 {
     return ec_SDOwrite(slave, index, subindex, FALSE, sizeof(uint8), &value, EC_TIMEOUTRXM);
 }
 
-/* 消除系统时钟偏移函数，取自cyclic_test */
+static inline void printBinary(uint16_t num)
+{
+    for (int i = 15; i >= 0; i--)
+    {
+        printf("%d", (num >> i) & 1);
+        if (i % 4 == 0)
+        {
+            printf(" ");
+        }
+    }
+    printf("b");
+}
+
+/* ref: cyclic_test */
 void set_latency_target(void)
 {
     struct stat s;
@@ -87,13 +105,14 @@ void set_latency_target(void)
             close(latency_target_fd);
             return;
         }
-        printf("# /dev/cpu_dma_latency set to %dus\r\n", latency_target_value);
+        console("/dev/cpu_dma_latency set to %dus", latency_target_value);
     }
 }
+
 // Priority
 int setPRICPUx(int Priority, int cpu_id)
 {
-    printf("[setPRICPUx] Priority= %d, cpu_id= %d\r\n", Priority, cpu_id);
+    // printf("[setPRICPUx] Priority= %d, cpu_id= %d\r\n", Priority, cpu_id);
 
     int ret = 0;
     // 指定 程序運作的cpu_id
@@ -110,8 +129,7 @@ int setPRICPUx(int Priority, int cpu_id)
     ret = sched_setscheduler(0, SCHED_FIFO, &schedp);
     if (ret)
     {
-        printf("[setPRICPUx] Warning: sched_setscheduler failed: %s\r\n", strerror(errno));
-        return ret;
+        console("[setPRICPUx] Warning: sched_setscheduler failed: %s", strerror(errno));
     }
 
     return ret;
@@ -132,64 +150,91 @@ int setNI(int Niceness)
     return ret;
 }
 
-int setupDeltaIO(void)
-
+int setupDeltaIO(uint16 slave)
 {
-    int slave = EC_SLAVE_ID;
     int wkc = 0;
-    printf("[slave:%d] DELTA RC-EC0902 setup\r\n", slave);
+    console("[slave:%d] DELTA RC-EC0902 setup", slave);
 
     // Active all DO port ----------------------------------------------------------
     // 此物件可以設定輸出通道是否允許變更(8 個輸出通道為一組)。0 代表不允許改變狀態，1 代表允許改變狀態。
-    //    Index: 2001 Datatype: 002a Objectcode: 09 Name: Active DO Enable
-    //    Sub: 00 Datatype: 0005 Bitlength: 0008 Obj.access: 0007 Name: SubIndex 000
-    //             Value :0x04 4
-    //    Sub: 01 Datatype: 0005 Bitlength: 0008 Obj.access: 003f Name: Active Port2 DO CH0~7 Enable
-    //             Value :0x00 0
-    //    Sub: 02 Datatype: 0005 Bitlength: 0008 Obj.access: 003f Name: Active Port2 DO CH8~15 Enable
-    //             Value :0x00 0
-    //    Sub: 03 Datatype: 0005 Bitlength: 0008 Obj.access: 003f Name: Active Port3 DO CH0~7 Enable
-    //             Value :0x00 0
-    //    Sub: 04 Datatype: 0005 Bitlength: 0008 Obj.access: 003f Name: Active Port3 DO CH8~15 Enable
-    //             Value :0x00 0
-    wkc += sdo_write8(EC_SLAVE_ID, 0x2001, 1, 0xFF);
-    wkc += sdo_write8(EC_SLAVE_ID, 0x2001, 2, 0xFF);
-    wkc += sdo_write8(EC_SLAVE_ID, 0x2001, 3, 0xFF);
-    wkc += sdo_write8(EC_SLAVE_ID, 0x2001, 4, 0xFF);
+    // 0x2001      "Active DO Enable"                          [RECORD  maxsub(0x04 / 4)]
+    //   0x00      "SubIndex 000"                              [UNSIGNED8        R_R_R_]      0x04 / 4
+    //   0x01      "Active Port2 DO CH0~7 Enable"              [UNSIGNED8        RWRWRW]      0xff / 255
+    //   0x02      "Active Port2 DO CH8~15 Enable"             [UNSIGNED8        RWRWRW]      0xff / 255
+    //   0x03      "Active Port3 DO CH0~7 Enable"              [UNSIGNED8        RWRWRW]      0xff / 255
+    //   0x04      "Active Port3 DO CH8~15 Enable"             [UNSIGNED8        RWRWRW]      0xff / 255
+    wkc += sdo_write8(slave, 0x2001, 1, 0xFF);
+    wkc += sdo_write8(slave, 0x2001, 2, 0xFF);
+    wkc += sdo_write8(slave, 0x2001, 3, 0xFF);
+    wkc += sdo_write8(slave, 0x2001, 4, 0xFF);
 
     // Error Mode disable ----------------------------------------------------------
     // 0 代表維持原本輸出值，1 代表參考Error Mode Output Value(6207h)的設定值。
-    //    Index: 6206 Datatype: 002a Objectcode: 09 Name: DO Error Mode Enable
-    //    Sub: 00 Datatype: 0005 Bitlength: 0008 Obj.access: 0007 Name: SubIndex 000
-    //             Value :0x04 4
-    //    Sub: 01 Datatype: 0005 Bitlength: 0008 Obj.access: 003f Name: Port2 DO Ch0~7 Error Mode Enable
-    //             Value :0xff 255
-    //    Sub: 02 Datatype: 0005 Bitlength: 0008 Obj.access: 003f Name: Port2 DO Ch8~15 Error Mode Enable
-    //             Value :0xff 255
-    //    Sub: 03 Datatype: 0005 Bitlength: 0008 Obj.access: 003f Name: Port3 DO Ch0~7 Error Mode Enable
-    //             Value :0xff 255
-    //    Sub: 04 Datatype: 0005 Bitlength: 0008 Obj.access: 003f Name: Port3 DO Ch8~15 Error Mode Enable
-    //             Value :0xff 255
-    wkc += sdo_write8(EC_SLAVE_ID, 0x6206, 1, 0x0);
-    wkc += sdo_write8(EC_SLAVE_ID, 0x6206, 2, 0x0);
-    wkc += sdo_write8(EC_SLAVE_ID, 0x6206, 3, 0x0);
-    wkc += sdo_write8(EC_SLAVE_ID, 0x6206, 4, 0x0);
+    // 0x6206      "DO Error Mode Enable"                        [RECORD  maxsub(0x04 / 4)]
+    //   0x00      "SubIndex 000"                                [UNSIGNED8        R_R_R_]      0x04 / 4
+    //   0x01      "Port2 DO Ch0~7 Error Mode Enable"            [UNSIGNED8        RWRWRW]      0x00 / 0
+    //   0x02      "Port2 DO Ch8~15 Error Mode Enable"           [UNSIGNED8        RWRWRW]      0x00 / 0
+    //   0x03      "Port3 DO Ch0~7 Error Mode Enable"            [UNSIGNED8        RWRWRW]      0x00 / 0
+    //   0x04      "Port3 DO Ch8~15 Error Mode Enable"           [UNSIGNED8        RWRWRW]      0x00 / 0
+    wkc += sdo_write8(slave, 0x6206, 1, 0x0);
+    wkc += sdo_write8(slave, 0x6206, 2, 0x0);
+    wkc += sdo_write8(slave, 0x6206, 3, 0x0);
+    wkc += sdo_write8(slave, 0x6206, 4, 0x0);
 
     // strncpy(ec_slave[slave].name, "IO", EC_MAXNAME);
 
     if (wkc != 8)
     {
-        printf("[slave:%d] setup failed\r\nwkc: %d\r\n", slave, wkc);
+        console("[slave:%d] DELTA RC-EC0902 setup failed. wkc: %d", slave, wkc);
         return -1;
     }
     else
     {
-        printf("[slave:%d] DELTA RC-EC0902 setup succeed.\r\n", slave);
+        console("[slave:%d] DELTA RC-EC0902 setup "LIGHT_GREEN"succeed."RESET, slave);
         return 0;
     }
 }
 
-void modifyBit(uint8 *value, int p, boolean bit)
+int setupZeroErrDriver(uint16 slave)
+{
+    int wkc = 0;
+    const int check_wkc = 2;
+    console("[slave:%d] ZeroErrDriver setup", slave);
+    // 釋放煞車
+    // 0x4602      "Release Brake"    [VAR]
+    //   0x00      "Release Brake"    [UNSIGNED32       RWRWRW]      0x00000000 / 0
+    //wkc += sdo_write8(slave, 0x4602, 0, 0x0);
+
+    uint16 map_RxPDOassign[] = {0x0001, 0x1600}; // 0x1c12
+    wkc += ec_SDOwrite(slave, 0x1c12, 0x00, TRUE, sizeof(map_RxPDOassign), &map_RxPDOassign, EC_TIMEOUTSAFE );
+
+    uint16 map_TxPDOassign[] = {0x0001, 0x1A00}; // 0x1c13
+    wkc += ec_SDOwrite(slave, 0x1c13, 0x00, TRUE, sizeof(map_TxPDOassign), &map_TxPDOassign, EC_TIMEOUTSAFE );
+
+    //wkc += ec_SDOwrite(slave, 0x1c13, 0x00, TRUE, sizeof(map_TxPDOassign), &map_TxPDOassign, EC_TIMEOUTSAFE );
+
+    //uint32 map_TxPDO[] = {0x0002, 0x60640020, 0x60FD0020};
+    //wkc += ec_SDOwrite(slave, 0x1A00, 0x00, TRUE, sizeof(map_TxPDO), &map_TxPDO, EC_TIMEOUTSAFE );
+
+    if (wkc != check_wkc)
+    {
+        console("[slave:%d] ZeroErrDriversetup "RED"failed."RESET" wkc: %d", slave, wkc);
+        return -1;
+    }
+    else
+    {
+        console("[slave:%d] ZeroErrDriver setup "LIGHT_GREEN"succeed."RESET, slave);
+        return 0;
+    }
+}
+
+void modifyBit8(uint8 *value, int p, boolean bit)
+{
+    int mask = 1 << p;
+    *value = ((*value & ~mask) | (bit << p));
+}
+
+void modifyBit16(uint16 *value, int p, boolean bit)
 {
     int mask = 1 << p;
     *value = ((*value & ~mask) | (bit << p));
@@ -253,7 +298,7 @@ void cyclic_test()
     // ----------------------------------------------------
     // real-time 定時器
     // ----------------------------------------------------
-    printf("[%ld ms] Starting RT task with dt=%u ns.\r\n", clock_ms(), PERIOD_NS);
+    console("[%ld ms] Starting RT task with dt=%u ns.", clock_ms(), PERIOD_NS);
     const int64 cycletime = PERIOD_NS; /* cycletime in ns */
 
     struct timespec wakeup_time;
@@ -324,6 +369,7 @@ void cyclic_task()
     int64 toff = 0;
     int64 dt;
 
+    int display_move = 4;   
     while (!bg_cancel)
     {
         // sleep直到指定的時間點
@@ -346,33 +392,42 @@ void cyclic_task()
             // console("[debug] toff = %ld ns", toff);
         }
 
-        int64 ck_time1 = clock_ns();
+        // -------------------------------------
+        // renew inputs
+        // -------------------------------------
         wkc = ec_receive_processdata(EC_TIMEOUTRET);
-        int64 ck_time2 = clock_ns();
 
+        // -------------------------------------
+        // logic
+        // -------------------------------------
         // 開關所有的Y
         if (dynamicY && cyc_count % 100 == 0)
-        {
+        {        
             for (size_t idx = 0; idx < 32; idx++)
             {
                 DO[idx] = !DO[idx];
             }
         }
+        
 
+
+        // -------------------------------------
+        // update outputs
         // ------------------------------------
-        // update output
-        // ------------------------------------
+        
         for (size_t idx_bit = 0; idx_bit < 8; idx_bit++)
         {
-            modifyBit(&ec_slave[EC_SLAVE_ID].outputs[0], idx_bit, DO[0 * 8 + idx_bit]);
-            modifyBit(&ec_slave[EC_SLAVE_ID].outputs[1], idx_bit, DO[1 * 8 + idx_bit]);
-            modifyBit(&ec_slave[EC_SLAVE_ID].outputs[2], idx_bit, DO[2 * 8 + idx_bit]);
-            modifyBit(&ec_slave[EC_SLAVE_ID].outputs[3], idx_bit, DO[3 * 8 + idx_bit]);
+            modifyBit8(&ec_slave[R2_EC0902].outputs[0], idx_bit, DO[0 * 8 + idx_bit]);
+            modifyBit8(&ec_slave[R2_EC0902].outputs[1], idx_bit, DO[1 * 8 + idx_bit]);
+            modifyBit8(&ec_slave[R2_EC0902].outputs[2], idx_bit, DO[2 * 8 + idx_bit]);
+            modifyBit8(&ec_slave[R2_EC0902].outputs[3], idx_bit, DO[3 * 8 + idx_bit]);
         }
 
-        int64 ck_time3 = clock_ns();
         ec_send_processdata();
-        int64 ck_time4 = clock_ns();
+
+        // ------------------------------------
+        // display  info
+        // ------------------------------------
 
         // dt = ck_time2 - ck_time1; // ec rx 用時
         // dt = ck_time4 - ck_time3; // ec tx 用時
@@ -389,7 +444,7 @@ void cyclic_task()
 
         // 顯示
         EXEC_INTERVAL(100)
-        {
+        {            
             consoler("cyc_count: %ld, Latency:(min, max, avg)us = (%ld, %ld, %.2f) T:%ld+(%3ld)ns ****",
                      cyc_count,
                      min_dt / 1000, max_dt / 1000, (double)sum_dt / cyc_count / 1000,
@@ -412,59 +467,173 @@ void cyclic_task()
             //     printf(" %2.2x", *(ec_slave[0].inputs + j));
             // }
             // printf(" T:%" PRId64 "\r", ec_DCtime);
-            // needlf = TRUE;
+            // needlf = TRUE;f
         }
     }
+    MOVEDOWN(display_move);
+
 }
 
+void print_ec_group(ec_groupt group)
+{
+    printf(" ---- print_ec_group: ---- \r\n");
+    printf("logstartaddr: %" PRIu32 "\n", group.logstartaddr);
+    printf("Obytes: %" PRIu32 "\n", group.Obytes);
+    printf("outputs: %p\n", (void *)group.outputs);
+    printf("Ibytes: %" PRIu32 "\n", group.Ibytes);
+    printf("inputs: %p\n", (void *)group.inputs);
+    printf("hasdc: %d\n", group.hasdc);
+    printf("DCnext: %" PRIu16 "\n", group.DCnext);
+    printf("Ebuscurrent: %" PRId16 "\n", group.Ebuscurrent);
+    printf("blockLRW: %" PRIu8 "\n", group.blockLRW);
+    printf("nsegments: %" PRIu16 "\n", group.nsegments);
+    printf("Isegment: %" PRIu16 "\n", group.Isegment);
+    printf("Ioffset: %" PRIu16 "\n", group.Ioffset);
+    printf("outputsWKC: %" PRIu16 "\n", group.outputsWKC);
+    printf("inputsWKC: %" PRIu16 "\n", group.inputsWKC);
+    printf("docheckstate: %d\n", group.docheckstate);
+    printf("IOsegment: ");
+    for (int i = 0; i < EC_MAXIOSEGMENTS; i++)
+    {
+        printf("%" PRIu32 " ", group.IOsegment[i]);
+    }
+    printf("\n");
+}
+void print_ec_slave(struct ec_slave slave)
+{
+    printf(" ---- print_ec_slave: [%s] ---- \r\n", slave.name);
+    printf("state: %u\n", slave.state);
+    printf("ALstatuscode: %u\n", slave.ALstatuscode);
+    printf("configadr: %u\n", slave.configadr);
+    printf("aliasadr: %u\n", slave.aliasadr);
+    printf("eep_man: %u\n", slave.eep_man);
+    printf("eep_id: %u\n", slave.eep_id);
+    printf("eep_rev: %u\n", slave.eep_rev);
+    printf("Itype: %u\n", slave.Itype);
+    printf("Dtype: %u\n", slave.Dtype);
+    printf("Obits: %u\n", slave.Obits);
+    printf("Obytes: %u\n", slave.Obytes);
+    printf("Ostartbit: %u\n", slave.Ostartbit);
+    printf("Ibits: %u\n", slave.Ibits);
+    printf("Ibytes: %u\n", slave.Ibytes);
+    printf("Istartbit: %u\n", slave.Istartbit);
+    printf("mbx_l: %u\n", slave.mbx_l);
+    printf("mbx_wo: %u\n", slave.mbx_wo);
+    printf("mbx_rl: %u\n", slave.mbx_rl);
+    printf("mbx_ro: %u\n", slave.mbx_ro);
+    printf("mbx_proto: %u\n", slave.mbx_proto);
+    printf("mbx_cnt: %u\n", slave.mbx_cnt);
+    printf("hasdc: %d\n", slave.hasdc);
+    printf("ptype: %u\n", slave.ptype);
+    printf("topology: %u\n", slave.topology);
+    printf("activeports: %u\n", slave.activeports);
+    printf("consumedports: %u\n", slave.consumedports);
+    printf("parent: %u\n", slave.parent);
+    printf("parentport: %u\n", slave.parentport);
+    printf("entryport: %u\n", slave.entryport);
+    printf("DCrtA: %d\n", slave.DCrtA);
+    printf("DCrtB: %d\n", slave.DCrtB);
+    printf("DCrtC: %d\n", slave.DCrtC);
+    printf("DCrtD: %d\n", slave.DCrtD);
+    printf("pdelay: %d\n", slave.pdelay);
+    printf("DCnext: %u\n", slave.DCnext);
+    printf("DCprevious: %u\n", slave.DCprevious);
+    printf("DCcycle: %d\n", slave.DCcycle);
+    printf("DCshift: %d\n", slave.DCshift);
+    printf("DCactive: %u\n", slave.DCactive);
+    printf("configindex: %u\n", slave.configindex);
+    printf("SIIindex: %u\n", slave.SIIindex);
+    printf("eep_8byte: %u\n", slave.eep_8byte);
+    printf("eep_pdi: %u\n", slave.eep_pdi);
+    printf("CoEdetails: %u\n", slave.CoEdetails);
+    printf("FoEdetails: %u\n", slave.FoEdetails);
+    printf("EoEdetails: %u\n", slave.EoEdetails);
+    printf("SoEdetails: %u\n", slave.SoEdetails);
+    printf("CoE details: %d\n", slave.CoEdetails);
+    printf("FoE details: %d\n", slave.FoEdetails);
+    printf("EoE details: %d\n", slave.EoEdetails);
+    printf("SoE details: %d\n", slave.SoEdetails);
+    printf("E-bus current: %d\n", slave.Ebuscurrent);
+    printf("Block LRW: %d\n", slave.blockLRW);
+    printf("Group: %d\n", slave.group);
+    printf("First unused FMMU: %d\n", slave.FMMUunused);
+    printf("Is lost: %d\n", slave.islost);
+}
 void simpletest(char *ifname)
 {
-    int i, oloop, iloop, chk;
+    int i;
     needlf = FALSE;
     inOP = FALSE;
 
-    printf("Starting simple test\r\n");
-    // 設定程式優先權
-    setPRICPUx(99, CPU_ID); // -99=RT
+    int64 ck_time = clock_ms();
+    int64 k_timeout = 3000; // 3s;
+
+    console("main work start...");
+
+    // 設定程式搶佔優先權到最高
+    console("Priority= RT, NI=-20 cpu_id= %d", CPU_ID);
+    setPRICPUx(99, CPU_ID); // 99=RT
     setNI(-20);
 
     /* initialise SOEM, bind socket to ifname */
     if (ec_init(ifname))
     {
-        printf("ec_init on %s succeeded.\r\n", ifname);
+        console("ec_init on %s succeeded.", ifname);
         /* find and auto-config slaves */
         if (ec_config_init(FALSE) > 0)
         {
-            printf("%d slaves found and configured.\r\n", ec_slavecount);
+            console("%d slaves found and configured.\r\n", ec_slavecount);
 
-            while (setupDeltaIO())
-                usleep(100);
+            // list all slave name
+            console("---- slave name ----");
+            for (int slave_id = 1; slave_id <= ec_slavecount; slave_id++)
+            {
+                console("[slave:%d] name: %s", slave_id, ec_slave[slave_id].name);
+            }
+            console(" ");
 
             memset(DO, 0, sizeof(DO));
 
-            ec_config_map(&IOmap);
+
+            ec_slave[R2_EC0902].PO2SOconfig = setupDeltaIO;
+
+            usedmem = ec_config_map(&IOmap);
+            console("IOmap address %p used memsize %d", IOmap, usedmem);
+            console("Slaves mapped state to SAFE_OP.");
+
+
+
             ec_configdc();
+            // for (int slave_id = 1; slave_id <= ec_slavecount; slave_id++)
+            // {
+            //      ec_dcsync0(slave_id, TRUE, PERIOD_NS, 20000U);
+            // }
 
-            printf("Slaves mapped, state to SAFE_OP.\r\n");
             /* wait for all slaves to reach SAFE_OP state */
-            ec_statecheck(0, EC_STATE_SAFE_OP, EC_TIMEOUTSTATE * 4);
+            ec_statecheck(0, EC_STATE_SAFE_OP, EC_TIMEOUTSTATE);
 
-            oloop = ec_slave[0].Obytes;
-            if ((oloop == 0) && (ec_slave[0].Obits > 0))
-                oloop = 1;
-            if (oloop > 8)
-                oloop = 8;
-            iloop = ec_slave[0].Ibytes;
-            if ((iloop == 0) && (ec_slave[0].Ibits > 0))
-                iloop = 1;
-            if (iloop > 8)
-                iloop = 8;
+            /* read indevidual slave state and store in ec_slave[] */
+            ec_readstate();
 
-            printf("segments : %d : %d %d %d %d\r\n", ec_group[0].nsegments, ec_group[0].IOsegment[0], ec_group[0].IOsegment[1], ec_group[0].IOsegment[2], ec_group[0].IOsegment[3]);
+            // list all slave infomation
+            console("---- slave infomation ----");
+            for (int cnt = 1; cnt <= ec_slavecount; cnt++)
+            {
+                console("Slave:%d Name:%s Output size:%3dbits Input size:%3dbits State:%2d delay:%d.%d",
+                        cnt, ec_slave[cnt].name,
+                        ec_slave[cnt].Obits,
+                        ec_slave[cnt].Ibits,
+                        ec_slave[cnt].state,
+                        (int)ec_slave[cnt].pdelay,
+                        ec_slave[cnt].hasdc);
+
+                //print_ec_slave(ec_slave[cnt]);
+            }
+            //print_ec_group(ec_group[0]);
+            expectedWKC = (ec_group[0].outputsWKC * 2) + ec_group[0].inputsWKC;
+            console("Calculated workcounter %d", expectedWKC);
 
             printf("Request operational state for all slaves\r\n");
-            expectedWKC = (ec_group[0].outputsWKC * 2) + ec_group[0].inputsWKC;
-            printf("Calculated workcounter %d\r\n", expectedWKC);
             ec_slave[0].state = EC_STATE_OPERATIONAL;
             /* send one valid process data to make outputs in slaves happy*/
             ec_send_processdata();
@@ -473,18 +642,28 @@ void simpletest(char *ifname)
             /* request OP state for all slaves */
             ec_writestate(0);
 
-            chk = 200;
+            ec_send_processdata();
+            ec_receive_processdata(EC_TIMEOUTRET);
+
             /* wait for all slaves to reach OP state */
-            do
+            consoler("wait for all slaves to reach OP state");
+            
+            ck_time = clock_ms();
+            while (!bg_cancel && (ec_statecheck(0, EC_STATE_OPERATIONAL, EC_TIMEOUTRET) != EC_STATE_OPERATIONAL))
             {
-                ec_send_processdata();
-                ec_receive_processdata(EC_TIMEOUTRET);
-                ec_statecheck(0, EC_STATE_OPERATIONAL, 50000);
-            } while (chk-- && (ec_slave[0].state != EC_STATE_OPERATIONAL));
+                int64 dt = clock_ms() - ck_time;
+                if (dt > k_timeout)
+                {
+                    printf(RED "Timeout" RESET);
+                    break;
+                }
+                consoler("wait for all slaves to reach OP state (%.1fs)...", (float32)(k_timeout - dt) / 1000);
+            }
+            printf("\r\n");
 
             if (ec_slave[0].state == EC_STATE_OPERATIONAL)
             {
-                printf("Operational state reached for all slaves.\r\n");
+                console("Operational state reached for all slaves.");
                 inOP = TRUE;
 
                 cyclic_task();
@@ -494,27 +673,27 @@ void simpletest(char *ifname)
             }
             else
             {
-                printf("Not all slaves reached operational state.\r\n");
+                console("Not all slaves reached operational state.");
                 ec_readstate();
                 for (i = 1; i <= ec_slavecount; i++)
                 {
                     if (ec_slave[i].state != EC_STATE_OPERATIONAL)
                     {
-                        printf("Slave %d State=0x%2.2x StatusCode=0x%4.4x : %s\r\n",
-                               i, ec_slave[i].state, ec_slave[i].ALstatuscode, ec_ALstatuscode2string(ec_slave[i].ALstatuscode));
+                        console("Slave %d State=0x%2.2x StatusCode=0x%4.4x : %s", i, ec_slave[i].state, ec_slave[i].ALstatuscode, ec_ALstatuscode2string(ec_slave[i].ALstatuscode));
                     }
                 }
             }
-            printf("\r\nRequest init state for all slaves\r\n");
+            console("[Exit] Request init state for all slaves");
             ec_slave[0].state = EC_STATE_INIT;
             /* request INIT state for all slaves */
             ec_writestate(0);
         }
         else
         {
-            printf("No slaves found!\r\n");
+            console("No slaves found!\r\n");
         }
-        printf("End simple test, close socket\r\n");
+
+        console("[Exit] close socket\r\n");
         /* stop SOEM, close socket */
         ec_close();
     }
@@ -526,7 +705,7 @@ void simpletest(char *ifname)
 
 OSAL_THREAD_FUNC ecatcheck(void *ptr)
 {
-    printf("[ecatcheck]\r\n");
+    console("[Thread] ecatcheck start");
     int slave;
     (void)ptr; /* Not used */
     // 設定程式優先權
@@ -551,13 +730,13 @@ OSAL_THREAD_FUNC ecatcheck(void *ptr)
                     ec_group[currentgroup].docheckstate = TRUE;
                     if (ec_slave[slave].state == (EC_STATE_SAFE_OP + EC_STATE_ERROR))
                     {
-                        printf("ERROR : slave %d is in SAFE_OP + ERROR, attempting ack.\r\n", slave);
+                        printf("\r\n ERROR : slave %d is in SAFE_OP + ERROR, attempting ack.\r\n", slave);
                         ec_slave[slave].state = (EC_STATE_SAFE_OP + EC_STATE_ACK);
                         ec_writestate(slave);
                     }
                     else if (ec_slave[slave].state == EC_STATE_SAFE_OP)
                     {
-                        printf("WARNING : slave %d is in SAFE_OP, change to OPERATIONAL.\r\n", slave);
+                        printf("\r\n WARNING : slave %d is in SAFE_OP, change to OPERATIONAL.\r\n", slave);
                         ec_slave[slave].state = EC_STATE_OPERATIONAL;
                         ec_writestate(slave);
                     }
@@ -566,7 +745,7 @@ OSAL_THREAD_FUNC ecatcheck(void *ptr)
                         if (ec_reconfig_slave(slave, EC_TIMEOUTMON))
                         {
                             ec_slave[slave].islost = FALSE;
-                            printf("MESSAGE : slave %d reconfigured\r\n", slave);
+                            printf("\r\n MESSAGE : slave %d reconfigured\r\n", slave);
                         }
                     }
                     else if (!ec_slave[slave].islost)
@@ -576,7 +755,7 @@ OSAL_THREAD_FUNC ecatcheck(void *ptr)
                         if (ec_slave[slave].state == EC_STATE_NONE)
                         {
                             ec_slave[slave].islost = TRUE;
-                            printf("ERROR : slave %d lost\r\n", slave);
+                            printf("\r\n ERROR : slave %d lost\r\n", slave);
                         }
                     }
                 }
@@ -587,18 +766,18 @@ OSAL_THREAD_FUNC ecatcheck(void *ptr)
                         if (ec_recover_slave(slave, EC_TIMEOUTMON))
                         {
                             ec_slave[slave].islost = FALSE;
-                            printf("MESSAGE : slave %d recovered\r\n", slave);
+                            printf("\r\n MESSAGE : slave %d recovered\r\n", slave);
                         }
                     }
                     else
                     {
                         ec_slave[slave].islost = FALSE;
-                        printf("MESSAGE : slave %d found\r\n", slave);
+                        printf("\r\n MESSAGE : slave %d found\r\n", slave);
                     }
                 }
             }
             if (!ec_group[currentgroup].docheckstate)
-                printf("OK : all slaves resumed OPERATIONAL.\r\n");
+                printf("\r\n OK : all slaves resumed OPERATIONAL.\r\n");
         }
         osal_usleep(10000);
     }
@@ -608,7 +787,7 @@ OSAL_THREAD_FUNC ecatcheck(void *ptr)
 
 OSAL_THREAD_FUNC keyboard(void *ptr)
 {
-    printf("[keyboard]\r\n");
+    console("[Thread] keyboard start");
 
     (void)ptr; /* Not used */
 
@@ -651,6 +830,10 @@ OSAL_THREAD_FUNC keyboard(void *ptr)
             sum_dt = 0;
             cyc_count = 0;
             break;
+        case 'q':
+            printf("\r\n");
+            bg_cancel = 1;
+            break;
 
         default:
             break;
@@ -660,7 +843,6 @@ OSAL_THREAD_FUNC keyboard(void *ptr)
         osal_usleep(10000);
     }
 
-    bg_cancel = 1;
     return;
 }
 
@@ -675,18 +857,8 @@ void signal_handler(int signum)
     }
 }
 
-// int main(int argc, char *argv[])
-int main(void)
+void signal_init()
 {
-
-    printf("SOEM (Simple Open EtherCAT Master)\r\ndelta io\r\n");
-    /* create thread to handle slave error handling in OP */
-    //      pthread_create( &thread1, NULL, (void *) &ecatcheck, (void*) &ctime);
-
-    set_latency_target(); // 消除系统时钟偏移
-    osal_thread_create(&bg_ecatcheck, 128000, &ecatcheck, (void *)&ctime);
-    osal_thread_create(&bg_keyboard, 2048, &keyboard, (void *)&ctime);
-
     // 攔截 ctrl + C 事件
     struct sigaction sa;
     sa.sa_handler = signal_handler;
@@ -694,11 +866,33 @@ int main(void)
     sa.sa_flags = 0;
     if (sigaction(SIGINT, &sa, NULL) == -1)
         printf("Failed to caught signal\r\n");
+}
+
+// int main(int argc, char *argv[])
+int main(void)
+{
+    console("SOEM (Simple Open EtherCAT Master)");
+    console("zero_err_driver start");
+    /* create thread to handle slave error handling in OP */
+    //      pthread_create( &thread1, NULL, (void *) &ecatcheck, (void*) &ctime);
+
+    printf("%s\r\n", clock_now());
+
+    set_latency_target(); // 消除系统时钟偏移
+
+    osal_thread_create(&bg_keyboard, 2048, &keyboard, (void *)&ctime);
+    usleep(100);
+
+    osal_thread_create(&bg_ecatcheck, 128000, &ecatcheck, (void *)&ctime);
+    usleep(100);
+
+    signal_init(); // 攔截 ctrl + C 事件
 
     /* start cyclic part */
+    usleep(100);
     simpletest(ETH_CH_NAME);
 
-    printf("End program\r\n");
+    console("End program");
 
     return (0);
 }
