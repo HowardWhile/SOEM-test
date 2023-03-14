@@ -52,10 +52,10 @@ char *clock_now()
 #define CLOCK_MS_FUNCTION clock
 #endif
 
-//#define TIMESTAMP_FUNCTION clock_ms
-//#define TIMESTAMP_FORMATE "%ld ms"
-// #define TIMESTAMP_FUNCTION clock_ns
-// #define TIMESTAMP_FORMATE "%ld ns"
+// #define TIMESTAMP_FUNCTION clock_ms
+// #define TIMESTAMP_FORMATE "%ld ms"
+//  #define TIMESTAMP_FUNCTION clock_ns
+//  #define TIMESTAMP_FORMATE "%ld ns"
 #define TIMESTAMP_FUNCTION clock_now
 #define TIMESTAMP_FORMATE "%s"
 
@@ -114,11 +114,11 @@ char *clock_now()
         PRINT_FUNCTION(__VA_ARGS__);                                      \
         PRINT_FUNCTION("\r\n");                                           \
     }
-#define consoler(...)                                                     \
-    {                                                                     \
+#define consoler(...)                                                       \
+    {                                                                       \
         PRINT_FUNCTION("\r[" TIMESTAMP_FORMATE "] ", TIMESTAMP_FUNCTION()); \
-        PRINT_FUNCTION(__VA_ARGS__);                                      \
-        fflush(stdout);                                                   \
+        PRINT_FUNCTION(__VA_ARGS__);                                        \
+        fflush(stdout);                                                     \
     }
 /* ----------------------------- */
 // 名稱: console_tag
@@ -165,6 +165,7 @@ char *clock_now()
 #define BLACK "\033[30m"              /* Black */
 #define RED "\033[31m"                /* Red */
 #define GREEN "\033[32m"              /* Green */
+#define LIGHT_GREEN "\033[1;32m"      /* Light Green */
 #define YELLOW "\033[33m"             /* Yellow */
 #define BLUE "\033[34m"               /* Blue */
 #define MAGENTA "\033[35m"            /* Magenta */
@@ -178,6 +179,9 @@ char *clock_now()
 #define BOLDMAGENTA "\033[1m\033[35m" /* Bold Magenta */
 #define BOLDCYAN "\033[1m\033[36m"    /* Bold Cyan */
 #define BOLDWHITE "\033[1m\033[37m"   /* Bold White */
+
+#define MOVEUP(x) printf("\033[%dA", (x))
+#define MOVEDOWN(x) printf("\033[%dB", (x))
 // printf( GREEN "Here is some text\n" RESET );
 #endif // ENABLE_ARC_CONSOLE
 

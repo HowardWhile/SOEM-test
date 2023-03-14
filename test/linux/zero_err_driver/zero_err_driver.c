@@ -51,8 +51,10 @@ OSAL_THREAD_HANDLE bg_keyboard;
 
 boolean dynamicY = FALSE;
 
+int usedmem;
 char IOmap[4096];
 boolean DO[32];
+boolean CtrlWord[16];
 
 int expectedWKC;
 boolean needlf;
@@ -76,6 +78,17 @@ int64 cyc_count = 0;
 //
 //  0x607a      "Target Position"       [VAR]
 //     0x00      "Target Position"      [INTEGER32        RWRWRW]      0x00000000 / 0
+//  0x60fe      "Digital outputs"       [VAR]
+//     0x00      "Digital outputs"      [UNSIGNED32       RWRWRW]      0x00000000 / 0
+//  0x6040      "Control Word"          [VAR]
+//     0x00      "Control Word"         [UNSIGNED16       RWRWRW]      0x0000 / 0
+typedef struct 
+{
+    int32_t Position;
+    uint32_t DigitalOutputs;
+    uint16_t CtrlWord;
+    /* data */
+}Driver_Outputs;
 
 // end of Driver_Outputs
 //-----------------------------------
@@ -96,7 +109,7 @@ typedef struct
 {
     int32_t Position;
     uint32_t DigitalInputs;
-    uint16_t Status;
+    uint16_t StatWord;
     /* data */
 }Driver_Inputs;
 // end of Driver_Inputs
@@ -108,6 +121,19 @@ typedef struct
 static int sdo_write8(uint16 slave, uint16 index, uint8 subindex, uint8 value)
 {
     return ec_SDOwrite(slave, index, subindex, FALSE, sizeof(uint8), &value, EC_TIMEOUTRXM);
+}
+
+static inline void printBinary(uint16_t num)
+{
+    for (int i = 15; i >= 0; i--)
+    {
+        printf("%d", (num >> i) & 1);
+        if (i % 4 == 0)
+        {
+            printf(" ");
+        }
+    }
+    printf("b");
 }
 
 /* ref: cyclic_test */
@@ -175,10 +201,10 @@ int setNI(int Niceness)
     return ret;
 }
 
-int setupDeltaIO(int slave)
+int setupDeltaIO(uint16 slave)
 {
     int wkc = 0;
-    consoler("[slave:%d] DELTA RC-EC0902 setup", slave);
+    console("[slave:%d] DELTA RC-EC0902 setup", slave);
 
     // Active all DO port ----------------------------------------------------------
     // 此物件可以設定輸出通道是否允許變更(8 個輸出通道為一組)。0 代表不允許改變狀態，1 代表允許改變狀態。
@@ -210,40 +236,56 @@ int setupDeltaIO(int slave)
 
     if (wkc != 8)
     {
-        //console("[slave:%d] setup failed\r\nwkc: %d", slave, wkc);
+        console("[slave:%d] DELTA RC-EC0902 setup failed. wkc: %d", slave, wkc);
         return -1;
     }
     else
     {
-        console("[slave:%d] DELTA RC-EC0902 setup succeed.", slave);
+        console("[slave:%d] DELTA RC-EC0902 setup "LIGHT_GREEN"succeed."RESET, slave);
         return 0;
     }
 }
 
-int setupZeroErrDriver(int slave)
+int setupZeroErrDriver(uint16 slave)
 {
     int wkc = 0;
-    const int check_wkc = 1;
-    consoler("[slave:%d] ZeroErrDriver setup", slave);
+    const int check_wkc = 2;
+    console("[slave:%d] ZeroErrDriver setup", slave);
     // 釋放煞車
     // 0x4602      "Release Brake"    [VAR]
     //   0x00      "Release Brake"    [UNSIGNED32       RWRWRW]      0x00000000 / 0
-    wkc += sdo_write8(slave, 0x4602, 0, 0x0);
+    //wkc += sdo_write8(slave, 0x4602, 0, 0x0);
 
+    uint16 map_RxPDOassign[] = {0x0001, 0x1600}; // 0x1c12
+    wkc += ec_SDOwrite(slave, 0x1c12, 0x00, TRUE, sizeof(map_RxPDOassign), &map_RxPDOassign, EC_TIMEOUTSAFE );
+
+    uint16 map_TxPDOassign[] = {0x0001, 0x1A00}; // 0x1c13
+    wkc += ec_SDOwrite(slave, 0x1c13, 0x00, TRUE, sizeof(map_TxPDOassign), &map_TxPDOassign, EC_TIMEOUTSAFE );
+
+    //wkc += ec_SDOwrite(slave, 0x1c13, 0x00, TRUE, sizeof(map_TxPDOassign), &map_TxPDOassign, EC_TIMEOUTSAFE );
+
+    //uint32 map_TxPDO[] = {0x0002, 0x60640020, 0x60FD0020};
+    //wkc += ec_SDOwrite(slave, 0x1A00, 0x00, TRUE, sizeof(map_TxPDO), &map_TxPDO, EC_TIMEOUTSAFE );
 
     if (wkc != check_wkc)
     {
-        //console("[slave:%d] setup failed wkc: %d != %d", slave, wkc, check_wkc);
+        console("[slave:%d] ZeroErrDriversetup "RED"failed."RESET" wkc: %d", slave, wkc);
         return -1;
     }
     else
     {
-        console("[slave:%d] ZeroErrDriver setup succeed.", slave);
+        console("[slave:%d] ZeroErrDriver setup "LIGHT_GREEN"succeed."RESET, slave);
         return 0;
     }
 }
 
-void modifyBit(uint8 *value, int p, boolean bit)
+void modifyBit8(uint8 *value, int p, boolean bit)
+{
+    int mask = 1 << p;
+    *value = ((*value & ~mask) | (bit << p));
+}
+
+void modifyBit16(uint16 *value, int p, boolean bit)
 {
     int mask = 1 << p;
     *value = ((*value & ~mask) | (bit << p));
@@ -378,6 +420,7 @@ void cyclic_task()
     int64 toff = 0;
     int64 dt;
 
+    int display_move = 4;   
     while (!bg_cancel)
     {
         // sleep直到指定的時間點
@@ -400,47 +443,76 @@ void cyclic_task()
             // console("[debug] toff = %ld ns", toff);
         }
 
+        // -------------------------------------
+        // renew inputs
+        // -------------------------------------
         wkc = ec_receive_processdata(EC_TIMEOUTRET);
+        Driver_Inputs *iptr = (Driver_Inputs*)ec_slave[ZeroErr_Driver_1].inputs;
 
+        // -------------------------------------
+        // logic
+        // -------------------------------------
         // 開關所有的Y
         if (dynamicY && cyc_count % 100 == 0)
-        {
+        {        
             for (size_t idx = 0; idx < 32; idx++)
             {
                 DO[idx] = !DO[idx];
             }
         }
+        
 
+
+        // -------------------------------------
+        // update outputs
         // ------------------------------------
-        // update output
-        // ------------------------------------
+        Driver_Outputs *optr = (Driver_Outputs*)ec_slave[ZeroErr_Driver_1].outputs;
+        
         for (size_t idx_bit = 0; idx_bit < 8; idx_bit++)
         {
-            modifyBit(&ec_slave[R2_EC0902].outputs[0], idx_bit, DO[0 * 8 + idx_bit]);
-            modifyBit(&ec_slave[R2_EC0902].outputs[1], idx_bit, DO[1 * 8 + idx_bit]);
-            modifyBit(&ec_slave[R2_EC0902].outputs[2], idx_bit, DO[2 * 8 + idx_bit]);
-            modifyBit(&ec_slave[R2_EC0902].outputs[3], idx_bit, DO[3 * 8 + idx_bit]);
+            modifyBit8(&ec_slave[R2_EC0902].outputs[0], idx_bit, DO[0 * 8 + idx_bit]);
+            modifyBit8(&ec_slave[R2_EC0902].outputs[1], idx_bit, DO[1 * 8 + idx_bit]);
+            modifyBit8(&ec_slave[R2_EC0902].outputs[2], idx_bit, DO[2 * 8 + idx_bit]);
+            modifyBit8(&ec_slave[R2_EC0902].outputs[3], idx_bit, DO[3 * 8 + idx_bit]);
         }
 
+        for (size_t idx_bit = 0; idx_bit < 16; idx_bit++)
+        {
+            modifyBit16(&optr->CtrlWord, idx_bit, CtrlWord[idx_bit]);
+        }
+
+        // display
         //console_throttle(1000, "%p", ec_slave[R2_EC0902].outputs);
         EXEC_INTERVAL(10)
         {
             
             printf("\r");
-            for (int idx = 0; idx < 28; idx++)
+            for (int idx = 0; idx < usedmem; idx++)
             {
                 printf("%02X ", (IOmap[idx])&0xFF);
             }
-            fflush(stdout);   
+            printf("\r\n");
 
+            printf("Pose:\t%10d %10d", optr->Position, iptr->Position);
+            printf("\r\n");
 
-            // for (int idx = 0; idx < (int)ec_slave[ZeroErr_Driver_1].Obytes; idx++)
-            // {
-            //     printf("%02X ", ec_slave[ZeroErr_Driver_1].outputs[idx]);
-            // }
+            printf("IO:\t0x%X 0x%X", optr->DigitalOutputs, iptr->DigitalInputs);
+            printf("\r\n");
 
-            //Driver_Inputs *iptr;
-            //iptr = (Driver_Inputs*)ec_slave[ZeroErr_Driver_1].inputs;
+            printf("Ctrl:\t");
+            printf("%d = " ,optr->CtrlWord);
+            printBinary(optr->CtrlWord);
+            printf("%d = " ,iptr->StatWord);
+            printBinary(iptr->StatWord);
+            printf("\r\n");
+
+            // consoler("cyc_count: %ld, Latency:(min, max, avg)us = (%ld, %ld, %.2f) T:%ld+(%3ld)ns ****",
+            //          cyc_count,
+            //          min_dt / 1000, max_dt / 1000, (double)sum_dt / cyc_count / 1000,
+            //          ec_DCtime, toff);
+            fflush(stdout);
+            MOVEUP(display_move);
+
             //printf("accPosition %d", iptr->Position);
             // for (int idx = 0; idx < (int)ec_slave[R2_EC0902].Obytes; idx++)
             // {
@@ -468,8 +540,7 @@ void cyclic_task()
 
         // 顯示
         EXEC_INTERVAL(100)
-        {
-            
+        {            
             // consoler("cyc_count: %ld, Latency:(min, max, avg)us = (%ld, %ld, %.2f) T:%ld+(%3ld)ns ****",
             //          cyc_count,
             //          min_dt / 1000, max_dt / 1000, (double)sum_dt / cyc_count / 1000,
@@ -495,6 +566,8 @@ void cyclic_task()
             // needlf = TRUE;f
         }
     }
+    MOVEDOWN(display_move);
+
 }
 
 void print_ec_group(ec_groupt group)
@@ -617,7 +690,11 @@ void simpletest(char *ifname)
 
             memset(DO, 0, sizeof(DO));
 
-            int usedmem = ec_config_map(&IOmap);
+
+            ec_slave[R2_EC0902].PO2SOconfig = setupDeltaIO;
+            ec_slave[ZeroErr_Driver_1].PO2SOconfig = setupZeroErrDriver;
+
+            usedmem = ec_config_map(&IOmap);
             console("IOmap address %p used memsize %d", IOmap, usedmem);
             console("Slaves mapped state to SAFE_OP.");
 
@@ -647,22 +724,22 @@ void simpletest(char *ifname)
                         (int)ec_slave[cnt].pdelay,
                         ec_slave[cnt].hasdc);
 
-                print_ec_slave(ec_slave[cnt]);
+                //print_ec_slave(ec_slave[cnt]);
             }
             //print_ec_group(ec_group[0]);
             expectedWKC = (ec_group[0].outputsWKC * 2) + ec_group[0].inputsWKC;
-            printf("Calculated workcounter %d\n", expectedWKC);
+            console("Calculated workcounter %d", expectedWKC);
 
-            while (setupDeltaIO(R2_EC0902))
-            {
-                int64 dt = clock_ms() - ck_time;
-                if (dt > k_timeout)
-                {
-                    printf(RED "Timeout" RESET);
-                    break;
-                }
-                usleep(100);
-            }
+            // while (setupDeltaIO(R2_EC0902))
+            // {
+            //     int64 dt = clock_ms() - ck_time;
+            //     if (dt > k_timeout)
+            //     {
+            //         printf(RED "Timeout" RESET);
+            //         break;
+            //     }
+            //     usleep(100);
+            // }
 
             // while (setupZeroErrDriver(ZeroErr_Driver_1))
             // {
@@ -861,7 +938,8 @@ OSAL_THREAD_FUNC keyboard(void *ptr)
         if (isdigit(ch))
         {
             int idx = ch - '0';
-            DO[idx] = !DO[idx];
+            //DO[idx] = !DO[idx];
+            CtrlWord[idx] = !CtrlWord[idx];
         }
 
         switch (ch)
