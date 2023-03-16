@@ -115,8 +115,20 @@ typedef struct
 // end of Driver_Inputs
 //-----------------------------------
 
+typedef enum{
+    Mode_Position = 0,
+    Mode_Velocity
+}Driver_Modes;
+Driver_Modes driver_mode = Mode_Position;
 int32_t pos_target = 0;
 int32_t pos_feedback = 0;
+int32_t max_speed = 10;
+
+int32_t direct = 1;
+int32_t temp_speed = 0;
+
+boolean request_servo_on = 0;
+boolean request_servo_off = 0;
 
 
 
@@ -415,6 +427,8 @@ void cyclic_task()
         return;
     }
 
+    pos_target = pos_feedback;
+
     // 初始統計時間
     last_cktime = ec_DCtime;
 
@@ -446,11 +460,13 @@ void cyclic_task()
             // console("[debug] toff = %ld ns", toff);
         }
 
+        wkc = ec_receive_processdata(EC_TIMEOUTRET);
+        Driver_Inputs *iptr = (Driver_Inputs*)ec_slave[ZeroErr_Driver_1].inputs;
+        Driver_Outputs *optr = (Driver_Outputs*)ec_slave[ZeroErr_Driver_1].outputs;
+
         // -------------------------------------
         // renew inputs
         // -------------------------------------
-        wkc = ec_receive_processdata(EC_TIMEOUTRET);
-        Driver_Inputs *iptr = (Driver_Inputs*)ec_slave[ZeroErr_Driver_1].inputs;
         pos_feedback = iptr->Position;
 
         // -------------------------------------
@@ -465,12 +481,58 @@ void cyclic_task()
             }
         }
         
+        if(request_servo_on)
+        {
+            request_servo_on = FALSE;
+            pos_target = pos_feedback;
+
+            CtrlWord[0] = TRUE;
+            CtrlWord[1] = TRUE;
+            CtrlWord[2] = TRUE;
+            CtrlWord[3] = TRUE;
+            CtrlWord[7] = FALSE;
+        }
+
+        if(request_servo_off)
+        {
+            request_servo_off = FALSE;
+            CtrlWord[0] = FALSE;            
+        }
+
+        if(driver_mode == Mode_Position)
+        {
+
+        }
+        else if(driver_mode == Mode_Velocity)
+        {
+            int delta_speed = 1;
+            if(direct == 1)
+            {
+                temp_speed += delta_speed;
+                if(temp_speed > max_speed)
+                    temp_speed = max_speed;
+            }
+            else if(direct == -1)
+            {
+                temp_speed -= delta_speed;
+                if(temp_speed < -max_speed)
+                    temp_speed = -max_speed;
+            }
+            else
+            {
+                if(temp_speed > 0)
+                    temp_speed -= delta_speed;
+                else if(temp_speed < 0)
+                    temp_speed += delta_speed;
+            }
+
+            pos_target += temp_speed;
+        }
 
 
         // -------------------------------------
         // update outputs
         // ------------------------------------
-        Driver_Outputs *optr = (Driver_Outputs*)ec_slave[ZeroErr_Driver_1].outputs;
         optr->Position = pos_target;
         for (size_t idx_bit = 0; idx_bit < 8; idx_bit++)
         {
@@ -497,18 +559,18 @@ void cyclic_task()
             }
             printf("\r\n");
 
-            printf("Pose:\t%10d %10d", optr->Position, iptr->Position);
-            printf("\r\n");
+            printf("Pose:\t%10d %10d, speed: %d, %d ", optr->Position, iptr->Position, max_speed, temp_speed);
+            printf("  ----\r\n");
 
             printf("IO:\t0x%X 0x%X", optr->DigitalOutputs, iptr->DigitalInputs);
-            printf("\r\n");
+            printf("  ----\r\n");
 
             printf("Ctrl:\t");
             printf("%5X = " ,optr->CtrlWord);
             printBinary(optr->CtrlWord);
             printf("%5X = " ,iptr->StatWord);
             printBinary(iptr->StatWord);
-            printf("\r\n");
+            printf(" ----\r\n");
 
             // consoler("cyc_count: %ld, Latency:(min, max, avg)us = (%ld, %ld, %.2f) T:%ld+(%3ld)ns ****",
             //          cyc_count,
@@ -543,8 +605,9 @@ void cyclic_task()
             max_dt = dt;
 
         // 顯示
-        EXEC_INTERVAL(100)
-        {            
+        EXEC_INTERVAL(100)        
+        {  
+
             // consoler("cyc_count: %ld, Latency:(min, max, avg)us = (%ld, %ld, %.2f) T:%ld+(%3ld)ns ****",
             //          cyc_count,
             //          min_dt / 1000, max_dt / 1000, (double)sum_dt / cyc_count / 1000,
@@ -949,40 +1012,79 @@ OSAL_THREAD_FUNC keyboard(void *ptr)
         case ' ':
             dynamicY = !dynamicY;
             break;
-        case 'r':
-            max_dt = LLONG_MIN;
-            min_dt = LLONG_MAX;
-            sum_dt = 0;
-            cyc_count = 0;
-            break;
+        // case 'r':
+        //     max_dt = LLONG_MIN;
+        //     min_dt = LLONG_MAX;
+        //     sum_dt = 0;
+        //     cyc_count = 0;
+        //     break;
         case 'q':
             printf("\r\n");
             bg_cancel = 1;
             break;
 
-        case 'a':
-            sdo_write8(ZeroErr_Driver_1, 0x4602, 0, 0x0);
-            break;
-        case 'd':
-            sdo_write8(ZeroErr_Driver_1, 0x4602, 0, 0x1);
-            break;
+        // case 'a':
+        //     sdo_write8(ZeroErr_Driver_1, 0x4602, 0, 0x0);
+        //     break;
+        // case 'd':
+        //     sdo_write8(ZeroErr_Driver_1, 0x4602, 0, 0x1);
+        //     break;
 
+        // 設定位置
         case 'w':
-            pos_target += 100;
+            driver_mode = Mode_Position;
+            pos_target += max_speed;
             break;
         case 's':
+            driver_mode = Mode_Position;
             pos_target = pos_feedback;
             break;
         case 'x':
-            pos_target -= 100;
+            driver_mode = Mode_Position;
+            pos_target -= max_speed;
             break;
+
+        // 設定速度
+        case 'e':
+            max_speed += 10;
+            break;
+        case 'd':
+            max_speed = 10;
+            break;
+        case 'c':
+            max_speed -= 10;
+            if(max_speed < 1)
+                max_speed = 1;
+            break;
+
+        // 持續旋轉
+        case 'r':
+            driver_mode = Mode_Velocity;
+            direct = 1;
+            break;
+        case 'f':
+            driver_mode = Mode_Velocity;
+            direct = 0;
+            break;
+        case 'v':
+            driver_mode = Mode_Velocity;
+            direct = -1;
+            break;
+
+        // servo
+        case 'o':
+        request_servo_on = TRUE;
+        break;
+        case 'p':
+        request_servo_off = TRUE;
+        break;
 
         default:
             break;
         }
 
         // printf("[keyboard] press (%c) (%d)\r\r\n", ch, ch);
-        osal_usleep(10000);
+        osal_usleep(10000); 
     }
 
     return;
