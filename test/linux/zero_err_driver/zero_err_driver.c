@@ -115,6 +115,9 @@ typedef struct
 // end of Driver_Inputs
 //-----------------------------------
 
+int32_t pos_target = 0;
+int32_t pos_feedback = 0;
+
 
 
 
@@ -448,6 +451,7 @@ void cyclic_task()
         // -------------------------------------
         wkc = ec_receive_processdata(EC_TIMEOUTRET);
         Driver_Inputs *iptr = (Driver_Inputs*)ec_slave[ZeroErr_Driver_1].inputs;
+        pos_feedback = iptr->Position;
 
         // -------------------------------------
         // logic
@@ -467,7 +471,7 @@ void cyclic_task()
         // update outputs
         // ------------------------------------
         Driver_Outputs *optr = (Driver_Outputs*)ec_slave[ZeroErr_Driver_1].outputs;
-        
+        optr->Position = pos_target;
         for (size_t idx_bit = 0; idx_bit < 8; idx_bit++)
         {
             modifyBit8(&ec_slave[R2_EC0902].outputs[0], idx_bit, DO[0 * 8 + idx_bit]);
@@ -500,9 +504,9 @@ void cyclic_task()
             printf("\r\n");
 
             printf("Ctrl:\t");
-            printf("%d = " ,optr->CtrlWord);
+            printf("%5X = " ,optr->CtrlWord);
             printBinary(optr->CtrlWord);
-            printf("%d = " ,iptr->StatWord);
+            printf("%5X = " ,iptr->StatWord);
             printBinary(iptr->StatWord);
             printf("\r\n");
 
@@ -926,8 +930,6 @@ OSAL_THREAD_FUNC keyboard(void *ptr)
     tcgetattr(0, &stored_settings);
     new_settings.c_cc[VMIN] = 1;
 
-    int wkc;
-
     int ch;
     while (ch != 'q')
     {
@@ -959,14 +961,20 @@ OSAL_THREAD_FUNC keyboard(void *ptr)
             break;
 
         case 'a':
-            wkc = sdo_write8(ZeroErr_Driver_1, 0x4602, 0, 0x0);
-            console(" ");
-            console("wkc = %d", wkc);  
+            sdo_write8(ZeroErr_Driver_1, 0x4602, 0, 0x0);
             break;
         case 'd':
-            wkc = sdo_write8(ZeroErr_Driver_1, 0x4602, 0, 0x1);
-            console(" ");
-            console("wkc = %d", wkc);
+            sdo_write8(ZeroErr_Driver_1, 0x4602, 0, 0x1);
+            break;
+
+        case 'w':
+            pos_target += 100;
+            break;
+        case 's':
+            pos_target = pos_feedback;
+            break;
+        case 'x':
+            pos_target -= 100;
             break;
 
         default:
