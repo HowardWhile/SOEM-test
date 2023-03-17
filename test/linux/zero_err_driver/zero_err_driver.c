@@ -62,6 +62,9 @@ volatile int wkc;
 boolean inOP;
 uint8 currentgroup = 0;
 
+int display_move = 5;   
+
+
 int64 last_cktime = 0;
 int64 max_dt = LLONG_MIN;
 int64 min_dt = LLONG_MAX;
@@ -364,7 +367,7 @@ void cyclic_test()
     // ----------------------------------------------------
     // real-time 定時器
     // ----------------------------------------------------
-    console("[%ld ms] Starting RT task with dt=%u ns.", clock_ms(), PERIOD_NS);
+    console("Starting RT task with dt=%u ns.", PERIOD_NS);
     const int64 cycletime = PERIOD_NS; /* cycletime in ns */
 
     struct timespec wakeup_time;
@@ -417,7 +420,7 @@ void cyclic_task()
     // ----------------------------------------------------
     // real-time 定時器
     // ----------------------------------------------------
-    printf("[%ld ms] Starting RT task with dt=%u ns.\r\n", clock_ms(), PERIOD_NS);
+    console("Starting RT task with dt=%u ns.", PERIOD_NS);
     const int64 cycletime = PERIOD_NS; /* cycletime in ns */
 
     struct timespec wakeup_time;
@@ -437,7 +440,6 @@ void cyclic_task()
     int64 toff = 0;
     int64 dt;
 
-    int display_move = 4;   
     while (!bg_cancel)
     {
         // sleep直到指定的時間點
@@ -505,28 +507,33 @@ void cyclic_task()
         }
         else if(driver_mode == Mode_Velocity)
         {
-            int delta_speed = 1;
-            if(direct == 1)
+            EXEC_INTERVAL(2)
             {
-                temp_speed += delta_speed;
-                if(temp_speed > max_speed)
-                    temp_speed = max_speed;
-            }
-            else if(direct == -1)
-            {
-                temp_speed -= delta_speed;
-                if(temp_speed < -max_speed)
-                    temp_speed = -max_speed;
-            }
-            else
-            {
-                if(temp_speed > 0)
-                    temp_speed -= delta_speed;
-                else if(temp_speed < 0)
-                    temp_speed += delta_speed;
-            }
+                int k_delta_speed = 1;
+                if (direct == 1)
+                {
+                    temp_speed += k_delta_speed;
+                    if (temp_speed > max_speed)
+                        temp_speed = max_speed;
+                }
+                else if (direct == -1)
+                {
+                    temp_speed -= k_delta_speed;
+                    if (temp_speed < -max_speed)
+                        temp_speed = -max_speed;
+                }
+                else
+                {
+                    if (temp_speed > 0)
+                        temp_speed -= k_delta_speed;
+                    else if (temp_speed < 0)
+                        temp_speed += k_delta_speed;
+                }
 
-            pos_target += temp_speed;
+                pos_target += temp_speed;
+            }
+            EXEC_INTERVAL_END;
+
         }
 
 
@@ -547,47 +554,6 @@ void cyclic_task()
             modifyBit16(&optr->CtrlWord, idx_bit, CtrlWord[idx_bit]);
         }
 
-        // display
-        //console_throttle(1000, "%p", ec_slave[R2_EC0902].outputs);
-        EXEC_INTERVAL(10)
-        {
-            
-            printf("\r");
-            for (int idx = 0; idx < usedmem; idx++)
-            {
-                printf("%02X ", (IOmap[idx])&0xFF);
-            }
-            printf("\r\n");
-
-            printf("Pose:\t%10d %10d, speed: %d, %d ", optr->Position, iptr->Position, max_speed, temp_speed);
-            printf("  ----\r\n");
-
-            printf("IO:\t0x%X 0x%X", optr->DigitalOutputs, iptr->DigitalInputs);
-            printf("  ----\r\n");
-
-            printf("Ctrl:\t");
-            printf("%5X = " ,optr->CtrlWord);
-            printBinary(optr->CtrlWord);
-            printf("%5X = " ,iptr->StatWord);
-            printBinary(iptr->StatWord);
-            printf(" ----\r\n");
-
-            // consoler("cyc_count: %ld, Latency:(min, max, avg)us = (%ld, %ld, %.2f) T:%ld+(%3ld)ns ****",
-            //          cyc_count,
-            //          min_dt / 1000, max_dt / 1000, (double)sum_dt / cyc_count / 1000,
-            //          ec_DCtime, toff);
-            fflush(stdout);
-            MOVEUP(display_move);
-
-            //printf("accPosition %d", iptr->Position);
-            // for (int idx = 0; idx < (int)ec_slave[R2_EC0902].Obytes; idx++)
-            // {
-            //     printf("%02X ", ec_slave[R2_EC0902].outputs[idx]);
-            // }          
-
-        }
-        EXEC_INTERVAL_END
-
 
         ec_send_processdata();
 
@@ -606,12 +572,44 @@ void cyclic_task()
 
         // 顯示
         EXEC_INTERVAL(100)        
-        {  
+        {
+            int NLcount = 0;
+            console("cyc_count: %ld, Latency:(min, max, avg)us = (%ld, %ld, %.2f) T:%ld+(%3ld)ns ****",
+                    cyc_count,
+                    min_dt / 1000, max_dt / 1000, (double)sum_dt / cyc_count / 1000,
+                    ec_DCtime, toff);
+            NLcount++;
 
-            // consoler("cyc_count: %ld, Latency:(min, max, avg)us = (%ld, %ld, %.2f) T:%ld+(%3ld)ns ****",
-            //          cyc_count,
-            //          min_dt / 1000, max_dt / 1000, (double)sum_dt / cyc_count / 1000,
-            //          ec_DCtime, toff);
+            console("---- IOmap infomation ----");
+            NLcount++;
+            for (int idx = 0; idx < usedmem; idx++)
+            {
+                printf("%02X ", (IOmap[idx]) & 0xFF);
+            }
+            printf("  ----  \r\n");
+            NLcount++;
+
+            console("---- driver infomation ----");
+            NLcount++;
+            printf("pose(output, input):\t %10d %10d, speed(max, tmp): %d, %d ---- \r\n", optr->Position, iptr->Position, max_speed, temp_speed);
+            NLcount++;
+            //printf("DIO(output, input): \t 0x%X 0x%X\r\n", optr->DigitalOutputs, iptr->DigitalInputs);
+            printf("(CtrlWord, StatWord)):\t");
+            printf("|%5d = " ,optr->CtrlWord);
+            printBinary(optr->CtrlWord);
+            printf("|%5d = " ,iptr->StatWord);
+            printBinary(iptr->StatWord);
+            printf(" ----\r\n");
+            NLcount++;
+
+            fflush(stdout);
+            MOVEUP(NLcount);
+
+            //printf("accPosition %d", iptr->Position);
+            // for (int idx = 0; idx < (int)ec_slave[R2_EC0902].Obytes; idx++)
+            // {
+            //     printf("%02X ", ec_slave[R2_EC0902].outputs[idx]);
+            // }    
         }
         EXEC_INTERVAL_END
 
@@ -745,7 +743,7 @@ void simpletest(char *ifname)
         /* find and auto-config slaves */
         if (ec_config_init(FALSE) > 0)
         {
-            console("%d slaves found and configured.\r\n", ec_slavecount);
+            console("%d slaves found and configured.", ec_slavecount);
 
             // list all slave name
             console("---- slave name ----");
@@ -753,14 +751,13 @@ void simpletest(char *ifname)
             {
                 console("[slave:%d] name: %s", slave_id, ec_slave[slave_id].name);
             }
-            console(" ");
 
             memset(DO, 0, sizeof(DO));
 
-
+            console("---- slave config ----");
+            
             ec_slave[R2_EC0902].PO2SOconfig = setupDeltaIO;
             ec_slave[ZeroErr_Driver_1].PO2SOconfig = setupZeroErrDriver;
-
             usedmem = ec_config_map(&IOmap);
             console("IOmap address %p used memsize %d", IOmap, usedmem);
             console("Slaves mapped state to SAFE_OP.");
@@ -795,32 +792,9 @@ void simpletest(char *ifname)
             }
             //print_ec_group(ec_group[0]);
             expectedWKC = (ec_group[0].outputsWKC * 2) + ec_group[0].inputsWKC;
-            console("Calculated workcounter %d", expectedWKC);
+            console("Calculated workcounter %d", expectedWKC);    
 
-            // while (setupDeltaIO(R2_EC0902))
-            // {
-            //     int64 dt = clock_ms() - ck_time;
-            //     if (dt > k_timeout)
-            //     {
-            //         printf(RED "Timeout" RESET);
-            //         break;
-            //     }
-            //     usleep(100);
-            // }
-
-            // while (setupZeroErrDriver(ZeroErr_Driver_1))
-            // {
-            //     int64 dt = clock_ms() - ck_time;
-            //     if (dt > k_timeout)
-            //     {
-            //         printf(RED "Timeout" RESET);
-            //         break;
-            //     }
-            //     consoler("wait for salve setup (%.1fs)...", (float32)(k_timeout - dt) / 1000);
-            //     usleep(100);
-            // }
-
-            printf("Request operational state for all slaves\r\n");
+            console("Request operational state for all slaves");
             ec_slave[0].state = EC_STATE_OPERATIONAL;
             /* send one valid process data to make outputs in slaves happy*/
             ec_send_processdata();
@@ -833,7 +807,7 @@ void simpletest(char *ifname)
             ec_receive_processdata(EC_TIMEOUTRET);
 
             /* wait for all slaves to reach OP state */
-            consoler("wait for all slaves to reach OP state");
+            console("wait for all slaves to reach OP state");
             
             ck_time = clock_ms();
             while (!bg_cancel && (ec_statecheck(0, EC_STATE_OPERATIONAL, EC_TIMEOUTRET) != EC_STATE_OPERATIONAL))
@@ -846,7 +820,6 @@ void simpletest(char *ifname)
                 }
                 consoler("wait for all slaves to reach OP state (%.1fs)...", (float32)(k_timeout - dt) / 1000);
             }
-            printf("\r\n");
 
             if (ec_slave[0].state == EC_STATE_OPERATIONAL)
             {
@@ -1012,12 +985,12 @@ OSAL_THREAD_FUNC keyboard(void *ptr)
         case ' ':
             dynamicY = !dynamicY;
             break;
-        // case 'r':
-        //     max_dt = LLONG_MIN;
-        //     min_dt = LLONG_MAX;
-        //     sum_dt = 0;
-        //     cyc_count = 0;
-        //     break;
+        case 'i':
+            max_dt = LLONG_MIN;
+            min_dt = LLONG_MAX;
+            sum_dt = 0;
+            cyc_count = 0;
+            break;
         case 'q':
             printf("\r\n");
             bg_cancel = 1;
@@ -1120,9 +1093,7 @@ int main(void)
     /* create thread to handle slave error handling in OP */
     //      pthread_create( &thread1, NULL, (void *) &ecatcheck, (void*) &ctime);
 
-    printf("%s\r\n", clock_now());
-
-    set_latency_target(); // 消除系统时钟偏移
+    set_latency_target(); // 消除系統時鐘的偏移
 
     osal_thread_create(&bg_keyboard, 2048, &keyboard, (void *)&ctime);
     usleep(100);
