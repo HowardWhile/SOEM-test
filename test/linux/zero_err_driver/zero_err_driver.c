@@ -415,6 +415,49 @@ void cyclic_test()
     }
 }
 
+int servo_on_step = 0;
+void servo_on_work()
+{
+    switch (servo_on_step++)
+    {
+    // 故障復位
+    case 0: 
+        CtrlWord[7] = FALSE;
+        break;    
+    case 1:
+        CtrlWord[7] = TRUE;
+        break;
+    case 2:
+        CtrlWord[7] = FALSE;
+        break;
+
+    case 3: // 關閉
+        CtrlWord[0] = FALSE;
+        CtrlWord[1] = TRUE;
+        CtrlWord[2] = TRUE;
+        CtrlWord[3] = FALSE;
+        break;
+
+    case 4: // 準備使能
+        CtrlWord[0] = TRUE;
+        CtrlWord[1] = TRUE;
+        CtrlWord[2] = TRUE;
+        CtrlWord[3] = FALSE;
+        break;
+
+    case 5: // 始能
+        CtrlWord[0] = TRUE;
+        CtrlWord[1] = TRUE;
+        CtrlWord[2] = TRUE;
+        CtrlWord[3] = TRUE;
+        break;
+    
+    default:
+        //servo_on_step = 0;
+        break;
+    } 
+}
+
 void cyclic_task()
 {
     // ----------------------------------------------------
@@ -487,18 +530,17 @@ void cyclic_task()
         {
             request_servo_on = FALSE;
             pos_target = pos_feedback;
-
-            CtrlWord[0] = TRUE;
-            CtrlWord[1] = TRUE;
-            CtrlWord[2] = TRUE;
-            CtrlWord[3] = TRUE;
-            CtrlWord[7] = FALSE;
+            servo_on_work();
         }
 
         if(request_servo_off)
         {
             request_servo_off = FALSE;
-            CtrlWord[0] = FALSE;            
+            servo_on_step = 0;
+            CtrlWord[0] = FALSE;     
+            CtrlWord[1] = FALSE;
+            CtrlWord[2] = FALSE;
+            CtrlWord[3] = FALSE;       
         }
 
         if(driver_mode == Mode_Position)
@@ -507,7 +549,7 @@ void cyclic_task()
         }
         else if(driver_mode == Mode_Velocity)
         {
-            EXEC_INTERVAL(2)
+            //EXEC_INTERVAL(1)
             {
                 int k_delta_speed = 1;
                 if (direct == 1)
@@ -532,7 +574,7 @@ void cyclic_task()
 
                 pos_target += temp_speed;
             }
-            EXEC_INTERVAL_END;
+            //EXEC_INTERVAL_END;
 
         }
 
