@@ -11,27 +11,24 @@
 #define PRINT_FUNCTION printf
 
 #ifdef _SYS_TIME_H // linux #include <sys/time.h>
-int64_t clock_ms()
+
+#define NSEC_PER_SEC (1000000000LL)
+
+int64 clock_ms()
 {
     // https://stackoverflow.com/questions/3756323/how-to-get-the-current-time-in-milliseconds-from-c-in-linux
-    struct timeval te;
-    // get current time
-    gettimeofday(&te, NULL);
-    // calculate milliseconds
-    int64_t msec = te.tv_sec * 1000LL + te.tv_usec / 1000;
-    // printf("milliseconds: %lld\n", milliseconds);
+    struct timeval tnow;    
+    gettimeofday(&tnow, NULL); // get current time    
+    int64 msec = tnow.tv_sec * 1000LL + tnow.tv_usec / 1000; // calculate milliseconds
+    // printf("milliseconds: %lld\n", milliseconds); 
     return msec;
 }
-int64_t clock_ns()
+int64 clock_ns()
 {
-    // https://stackoverflow.com/questions/3756323/how-to-get-the-current-time-in-milliseconds-from-c-in-linux
-    struct timeval te;
-    // get current time
-    gettimeofday(&te, NULL);
-    // calculate milliseconds
-    int64_t usec = te.tv_sec * 1000000000LL + te.tv_usec*1000;
-    // printf("milliseconds: %lld\n", milliseconds);
-    return usec;
+    struct timespec tnow;    
+    clock_gettime(CLOCK_MONOTONIC, &tnow);
+    int64 nsec = tnow.tv_sec * NSEC_PER_SEC + tnow.tv_nsec;
+    return nsec;
 }
 #define CLOCK_MS_FUNCTION clock_ms
 
@@ -134,7 +131,7 @@ int64_t clock_ns()
         static int fps_count = 0;   \
         EXEC_INTERVAL(1000)         \
         {                           \
-            console("[%s] fps: %d", \
+            console("[%s] fps: %d ", \
                     tag_name,       \
                     fps_count);     \
             fps_count = 0;          \

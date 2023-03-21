@@ -1,6 +1,6 @@
+#define _GNU_SOURCE
 #include <errno.h>
 
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <inttypes.h>
@@ -8,25 +8,53 @@
 
 #include <sys/time.h>
 
+// cpu latency
+#include <sys/stat.h>
+#include <fcntl.h>
+
 // set priorty
 #include <unistd.h>
 #include <sys/resource.h>
 
+// 線程 cpu 榜定
+#include <sched.h>
+#include <stdio.h>
+
 // keyboard
-#include <curses.h>
+#include <termios.h> //PISOX中定义的标准接口
 #include <ctype.h>
 
 #include "ethercat.h"
 #include "arc_console.hpp"
 
+#define EC_TIMEOUTMON 500
+
+// 通訊用的eth設備名稱
+#define ETH_CH_NAME "eno1"
+
+// Slave的站號
+#define EC_SLAVE_ID 1
+
+// 指定運行的CPU編號
+#define CPU_ID 7
+
 // RT Loop的週期
-#define PERIOD_NS (1000000) // 1k hz
-//#define PERIOD_NS (100000) // 10k hz
-#define NSEC_PER_SEC (1000000000)
+#define PERIOD_NS (1 * 1000 * 1000) // 1ms
+//#define PERIOD_NS (500 * 1000) // 500u
 
 boolean bg_cancel = 0;
-OSAL_THREAD_HANDLE thread1;
+OSAL_THREAD_HANDLE bg_ecatcheck;
 OSAL_THREAD_HANDLE bg_keyboard;
+
+boolean dynamicY = FALSE;
+
+char IOmap[4096];
+
+int expectedWKC;
+boolean needlf;
+volatile int wkc;
+boolean inOP;
+uint8 currentgroup = 0;
 
 int64 last_cktime = 0;
 int64 max_dt = LLONG_MIN;
@@ -34,43 +62,481 @@ int64 min_dt = LLONG_MAX;
 int64 sum_dt = 0;
 int64 cyc_count = 0;
 
-void cyclic_task()
-{  
-    //int64 dc_time = ec_DCtime;
-    int64 dc_time = clock_ns();
-    int64 dt = dc_time - last_cktime;
-    cyc_count++;
-    sum_dt += dt;
+/* 消除系统时钟偏移函数，取自cyclic_test */
+void set_latency_target(void)
+{
+    struct stat s;
+    int ret;
 
-    if (dt < min_dt)
-        min_dt = dt;
-
-    if (dt > max_dt)
-        max_dt = dt;
-
-    last_cktime = dc_time;
-
-    // 顯示
-    EXEC_INTERVAL(100)
+    if (stat("/dev/cpu_dma_latency", &s) == 0)
     {
-        console("cyc_count: %ld, (min, max, avg)us = (%ld, %ld, %.2f) T:%ldns ****",
-                 cyc_count,
-                 min_dt / 1000, max_dt / 1000, (double)sum_dt / cyc_count / 1000,
-                 dc_time);
+        int latency_target_fd = open("/dev/cpu_dma_latency", O_RDWR);
+        if (latency_target_fd == -1)
+            return;
+
+        int32_t latency_target_value = 0;
+        ret = write(latency_target_fd, &latency_target_value, 4);
+        if (ret == 0)
+        {
+            printf("# error setting cpu_dma_latency to %d!: %s\r\n", latency_target_value, strerror(errno));
+            close(latency_target_fd);
+            return;
+        }
+        printf("# /dev/cpu_dma_latency set to %dus\r\n", latency_target_value);
     }
-    EXEC_INTERVAL_END
+}
+// Priority
+int setPRICPUx(int Priority, int cpu_id)
+{
+    printf("[setPRICPUx] Priority= %d, cpu_id= %d\r\n", Priority, cpu_id);
+
+    int ret = 0;
+    // 指定 程序運作的cpu_id
+    cpu_set_t mask;
+    CPU_ZERO(&mask);
+    CPU_SET(cpu_id, &mask);
+    pthread_t thread = pthread_self();
+    pthread_setaffinity_np(thread, sizeof(mask), &mask);
+
+    // Set Priority, 99 = RT
+    struct sched_param schedp;
+    memset(&schedp, 0, sizeof(schedp));
+    schedp.sched_priority = Priority;
+    ret = sched_setscheduler(0, SCHED_FIFO, &schedp);
+    if (ret)
+    {
+        printf("[setPRICPUx] Warning: sched_setscheduler failed: %s\r\n", strerror(errno));
+        return ret;
+    }
+
+    return ret;
+}
+
+int setNI(int Niceness)
+{
+    int ret = 0;
+    pid_t pid = getpid(); // 獲得進程PID
+
+    // Set NI (Niceness) -19 = 最高優先權
+    ret = setpriority(PRIO_PROCESS, pid, Niceness);
+    if (ret)
+    {
+        printf("Warning: setpriority failed: %s\r\n", strerror(errno));
+        return ret;
+    }
+    return ret;
+}
+
+static inline int64_t calcdiff_ns(struct timespec t1, struct timespec t2)
+{
+    int64_t tdiff;
+    tdiff = NSEC_PER_SEC * (int64_t)((int)t1.tv_sec - (int)t2.tv_sec);
+    tdiff += ((int)t1.tv_nsec - (int)t2.tv_nsec);
+    return tdiff;
+}
+
+/* add ns to timespec */
+void add_timespec(struct timespec *ts, int64 addtime)
+{
+    int64 sec, nsec;
+
+    nsec = addtime % NSEC_PER_SEC;
+    sec = (addtime) / NSEC_PER_SEC;
+    ts->tv_sec += sec;
+    ts->tv_nsec += nsec;
+    if (ts->tv_nsec > NSEC_PER_SEC)
+    {
+        nsec = ts->tv_nsec % NSEC_PER_SEC;
+        ts->tv_sec += (ts->tv_nsec) / NSEC_PER_SEC;
+        ts->tv_nsec = nsec;
+    }
+}
+
+/* PI calculation to get linux time synced to DC time */
+void ec_sync(int64 reftime, int64 cycletime, int64 *offsettime)
+{
+    static int64 integral = 0;
+    int64 delta;
+    /* set linux sync point 50us later than DC sync, just as example */
+    delta = (reftime - 50 * 1000) % cycletime;
+    //delta = (reftime + 200 * 1000) % cycletime;
+    // delta = (reftime - 200*1000) % cycletime;
+    if (delta > (cycletime / 2))
+    {
+        delta = delta - cycletime;
+    }
+    if (delta > 0)
+    {
+        integral++;
+    }
+    if (delta < 0)
+    {
+        integral--;
+    }
+    *offsettime = -(delta / 100) - (integral / 20);
+}
+
+void cyclic_test()
+{
+    // ----------------------------------------------------
+    // real-time 定時器
+    // ----------------------------------------------------
+    console("Starting RT task with dt=%u ns", PERIOD_NS);   
+
+    const int64 cycletime = PERIOD_NS; /* cycletime in ns */
+
+    struct timespec wakeup_time;
+    if (clock_gettime(CLOCK_MONOTONIC, &wakeup_time) == -1) // 當前的精準時間
+    {
+        printf("clock_gettime failed\r\n");
+        return;
+    }
+
+    int64 dt;
+    struct timespec tnow;
+
+    while (!bg_cancel)
+    {
+        // sleep直到指定的時間點
+        add_timespec(&wakeup_time, cycletime);
+        int ret = clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &wakeup_time, NULL);
+        if (ret)
+        {
+            // sleep錯誤處理
+            printf("clock_nanosleep(): %s\n", strerror(ret));
+            // break;
+        }
+
+        clock_gettime(CLOCK_MONOTONIC, &tnow);
+        dt = calcdiff_ns(tnow, wakeup_time);
+
+        cyc_count++;
+        sum_dt += dt;
+
+        if (dt < min_dt)
+            min_dt = dt;
+
+        if (dt > max_dt)
+            max_dt = dt;
+
+        // 顯示
+        EXEC_INTERVAL(100)
+        {
+            consoler("cyc_count: %ld, Latency:(min, max, avg)us = (%ld, %ld, %.2f) ****",
+                     cyc_count,
+                     min_dt / 1000, max_dt / 1000, (double)sum_dt / cyc_count / 1000);
+        }
+        EXEC_INTERVAL_END
+    }
+}
+
+void cyclic_task()
+{
+
+
+    // ----------------------------------------------------
+    // real-time 定時器
+    // ----------------------------------------------------
+    console("Starting RT task with dt=%u ns", PERIOD_NS);
+    console("press 'r' reset count, 'q' exit...\r\n");
+    const int64 cycletime = PERIOD_NS; /* cycletime in ns */
+
+    struct timespec wakeup_time;
+    if (clock_gettime(CLOCK_MONOTONIC, &wakeup_time) == -1) // 當前的精準時間
+    {
+        printf("clock_gettime failed\r\n");
+        return;
+    }
+
+    // 初始統計時間
+    last_cktime = ec_DCtime;
+
+    //
+    struct timespec tnow;
+    int64 toff = 0;
+    int64 dt;
+
+    while (!bg_cancel)
+    {
+        // sleep直到指定的時間點
+        add_timespec(&wakeup_time, cycletime + toff);
+        int ret = clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &wakeup_time, NULL);
+        clock_gettime(CLOCK_MONOTONIC, &tnow);
+        dt = calcdiff_ns(tnow, wakeup_time);
+
+        if (ret)
+        {
+            // sleep錯誤處理
+            printf("clock_nanosleep(): %s\n", strerror(ret));
+            // break;
+        }
+
+        // calulate toff to get linux time and DC synced
+        if (ec_slave[0].hasdc)
+        {
+            ec_sync(ec_DCtime, cycletime, &toff);
+            // console("[debug] toff = %ld ns", toff);
+        }
+
+        wkc = ec_receive_processdata(EC_TIMEOUTRET);
+        ec_send_processdata();
+
+        cyc_count++;
+        sum_dt += dt;
+
+        if (dt < min_dt)
+            min_dt = dt;
+
+        if (dt > max_dt)
+            max_dt = dt;
+
+        // 顯示
+        EXEC_INTERVAL(100)
+        {
+            consoler("cyc_count: %ld, Latency:(min, max, avg)us = (%ld, %ld, %.2f) T:%ld+(%3ld)ns ****",
+                     cyc_count,
+                     min_dt / 1000, max_dt / 1000, (double)sum_dt / cyc_count / 1000,
+                     ec_DCtime, toff);
+        }
+        EXEC_INTERVAL_END
+
+        if (wkc >= expectedWKC)
+        {
+            // printf("\t\tProcessdata cycle %4d, WKC %d , O:", cyc_count++, wkc);
+
+            // for (int j = 0; j < 4; j++)
+            // {
+            //     printf(" %2.2x", *(ec_slave[0].outputs + j));
+            // }
+
+            // printf(" I:");
+            // for (int j = 0; j < 4; j++)
+            // {
+            //     printf(" %2.2x", *(ec_slave[0].inputs + j));
+            // }
+            // printf(" T:%" PRId64 "\r", ec_DCtime);
+            // needlf = TRUE;
+        }
+    }
+}
+
+
+void simpletest(char *ifname)
+{
+    int i, oloop, iloop, chk;
+    needlf = FALSE;
+    inOP = FALSE;
+
+    printf("Starting simple test\r\n");
+    // 設定程式優先權
+    setPRICPUx(99, CPU_ID); // -99=RT
+    setNI(-20);
+
+    /* initialise SOEM, bind socket to ifname */
+    if (ec_init(ifname))
+    {
+        printf("ec_init on %s succeeded.\r\n", ifname);
+        /* find and auto-config slaves */
+        if (ec_config_init(FALSE) > 0)
+        {
+            printf("%d slaves found and configured.\r\n", ec_slavecount);
+
+            ec_config_map(&IOmap);
+            ec_configdc();
+
+            printf("Slaves mapped, state to SAFE_OP.\r\n");
+            /* wait for all slaves to reach SAFE_OP state */
+            ec_statecheck(0, EC_STATE_SAFE_OP, EC_TIMEOUTSTATE * 4);
+
+            oloop = ec_slave[0].Obytes;
+            if ((oloop == 0) && (ec_slave[0].Obits > 0))
+                oloop = 1;
+            if (oloop > 8)
+                oloop = 8;
+            iloop = ec_slave[0].Ibytes;
+            if ((iloop == 0) && (ec_slave[0].Ibits > 0))
+                iloop = 1;
+            if (iloop > 8)
+                iloop = 8;
+
+            printf("segments : %d : %d %d %d %d\r\n", ec_group[0].nsegments, ec_group[0].IOsegment[0], ec_group[0].IOsegment[1], ec_group[0].IOsegment[2], ec_group[0].IOsegment[3]);
+
+            printf("Request operational state for all slaves\r\n");
+            expectedWKC = (ec_group[0].outputsWKC * 2) + ec_group[0].inputsWKC;
+            printf("Calculated workcounter %d\r\n", expectedWKC);
+            ec_slave[0].state = EC_STATE_OPERATIONAL;
+            /* send one valid process data to make outputs in slaves happy*/
+            ec_send_processdata();
+            ec_receive_processdata(EC_TIMEOUTRET);
+
+            /* request OP state for all slaves */
+            ec_writestate(0);
+
+            chk = 200;
+            /* wait for all slaves to reach OP state */
+            do
+            {
+                ec_send_processdata();
+                ec_receive_processdata(EC_TIMEOUTRET);
+                ec_statecheck(0, EC_STATE_OPERATIONAL, 50000);
+            } while (chk-- && (ec_slave[0].state != EC_STATE_OPERATIONAL));
+
+            if (ec_slave[0].state == EC_STATE_OPERATIONAL)
+            {
+                printf("Operational state reached for all slaves.\r\n");
+                inOP = TRUE;
+
+                //cyclic_test();
+                cyclic_task();
+
+                inOP = FALSE;
+            }
+            else
+            {
+                printf("Not all slaves reached operational state.\r\n");
+                ec_readstate();
+                for (i = 1; i <= ec_slavecount; i++)
+                {
+                    if (ec_slave[i].state != EC_STATE_OPERATIONAL)
+                    {
+                        printf("Slave %d State=0x%2.2x StatusCode=0x%4.4x : %s\r\n",
+                               i, ec_slave[i].state, ec_slave[i].ALstatuscode, ec_ALstatuscode2string(ec_slave[i].ALstatuscode));
+                    }
+                }
+            }
+            printf("\r\nRequest init state for all slaves\r\n");
+            ec_slave[0].state = EC_STATE_INIT;
+            /* request INIT state for all slaves */
+            ec_writestate(0);
+        }
+        else
+        {
+            printf("No slaves found!\r\n");
+        }
+        printf("End simple test, close socket\r\n");
+        /* stop SOEM, close socket */
+        ec_close();
+    }
+    else
+    {
+        printf("No socket connection on %s\r\nExcecute as root\r\n", ifname);
+    }
+}
+
+OSAL_THREAD_FUNC ecatcheck(void *ptr)
+{
+    printf("[ecatcheck]\r\n");
+    int slave;
+    (void)ptr; /* Not used */
+    // 設定程式優先權
+    //setPRICPUx(20, CPU_ID); //
+  
+
+    while (!bg_cancel)
+    {
+        if (inOP && ((wkc < expectedWKC) || ec_group[currentgroup].docheckstate))
+        {
+            if (needlf)
+            {
+                needlf = FALSE;
+                printf("\r\n");
+            }
+            /* one ore more slaves are not responding */
+            ec_group[currentgroup].docheckstate = FALSE;
+            ec_readstate();
+            for (slave = 1; slave <= ec_slavecount; slave++)
+            {
+                if ((ec_slave[slave].group == currentgroup) && (ec_slave[slave].state != EC_STATE_OPERATIONAL))
+                {
+                    ec_group[currentgroup].docheckstate = TRUE;
+                    if (ec_slave[slave].state == (EC_STATE_SAFE_OP + EC_STATE_ERROR))
+                    {
+                        printf("ERROR : slave %d is in SAFE_OP + ERROR, attempting ack.\r\n", slave);
+                        ec_slave[slave].state = (EC_STATE_SAFE_OP + EC_STATE_ACK);
+                        ec_writestate(slave);
+                    }
+                    else if (ec_slave[slave].state == EC_STATE_SAFE_OP)
+                    {
+                        printf("WARNING : slave %d is in SAFE_OP, change to OPERATIONAL.\r\n", slave);
+                        ec_slave[slave].state = EC_STATE_OPERATIONAL;
+                        ec_writestate(slave);
+                    }
+                    else if (ec_slave[slave].state > EC_STATE_NONE)
+                    {
+                        if (ec_reconfig_slave(slave, EC_TIMEOUTMON))
+                        {
+                            ec_slave[slave].islost = FALSE;
+                            printf("MESSAGE : slave %d reconfigured\r\n", slave);
+                        }
+                    }
+                    else if (!ec_slave[slave].islost)
+                    {
+                        /* re-check state */
+                        ec_statecheck(slave, EC_STATE_OPERATIONAL, EC_TIMEOUTRET);
+                        if (ec_slave[slave].state == EC_STATE_NONE)
+                        {
+                            ec_slave[slave].islost = TRUE;
+                            printf("ERROR : slave %d lost\r\n", slave);
+                        }
+                    }
+                }
+                if (ec_slave[slave].islost)
+                {
+                    if (ec_slave[slave].state == EC_STATE_NONE)
+                    {
+                        if (ec_recover_slave(slave, EC_TIMEOUTMON))
+                        {
+                            ec_slave[slave].islost = FALSE;
+                            printf("MESSAGE : slave %d recovered\r\n", slave);
+                        }
+                    }
+                    else
+                    {
+                        ec_slave[slave].islost = FALSE;
+                        printf("MESSAGE : slave %d found\r\n", slave);
+                    }
+                }
+            }
+            if (!ec_group[currentgroup].docheckstate)
+                printf("OK : all slaves resumed OPERATIONAL.\r\n");
+        }
+        osal_usleep(10000);
+    }
+
+    printf("exit ecatcheck\r\r\n");
 }
 
 OSAL_THREAD_FUNC keyboard(void *ptr)
 {
+    printf("[keyboard]\r\n");
+
     (void)ptr; /* Not used */
+
+    // 設定程式優先權
+    //setPRICPUx(21, CPU_ID); //
+    struct termios new_settings;
+    struct termios stored_settings;
+
+    tcgetattr(0, &stored_settings);
+    new_settings = stored_settings;
+    new_settings.c_lflag &= (~ICANON); // 屏蔽整行缓存
+    new_settings.c_cc[VTIME] = 0;
+
+    int tcgetattr(int fd, struct termios *termios_p);
+    tcgetattr(0, &stored_settings);
+    new_settings.c_cc[VMIN] = 1;
+
     int ch;
     while (ch != 'q')
     {
-        ch = getch();
+        tcsetattr(0, TCSANOW, &new_settings);
+        ch = getchar();
+        tcsetattr(0, TCSANOW, &stored_settings);
+
         switch (ch)
         {
         case ' ':
+            dynamicY = !dynamicY;
             break;
         case 'r':
             max_dt = LLONG_MIN;
@@ -84,27 +550,11 @@ OSAL_THREAD_FUNC keyboard(void *ptr)
         }
 
         // printf("[keyboard] press (%c) (%d)\r\r\n", ch, ch);
+        osal_usleep(10000);
     }
+
     bg_cancel = 1;
     return;
-}
-
-struct timespec timespec_add(struct timespec time1, struct timespec time2)
-{
-    struct timespec result;
-
-    if ((time1.tv_nsec + time2.tv_nsec) >= NSEC_PER_SEC)
-    {
-        result.tv_sec = time1.tv_sec + time2.tv_sec + 1;
-        result.tv_nsec = time1.tv_nsec + time2.tv_nsec - NSEC_PER_SEC;
-    }
-    else
-    {
-        result.tv_sec = time1.tv_sec + time2.tv_sec;
-        result.tv_nsec = time1.tv_nsec + time2.tv_nsec;
-    }
-
-    return result;
 }
 
 void signal_handler(int signum)
@@ -121,9 +571,18 @@ void signal_handler(int signum)
 // int main(int argc, char *argv[])
 int main(void)
 {
-    initscr();
-    noecho();
-    osal_thread_create(&bg_keyboard, 1024, &keyboard, (void *)&ctime);
+
+    printf("SOEM (Simple Open EtherCAT Master)\r\ndelta io\r\n");
+
+    console("cyclic_test...");
+
+    /* create thread to handle slave error handling in OP */
+    //      pthread_create( &thread1, NULL, (void *) &ecatcheck, (void*) &ctime);
+
+    set_latency_target(); // 消除系统时钟偏移
+    osal_thread_create(&bg_ecatcheck, 128000, &ecatcheck, (void *)&ctime);
+    osal_thread_create(&bg_keyboard, 2048, &keyboard, (void *)&ctime);
+
     // 攔截 ctrl + C 事件
     struct sigaction sa;
     sa.sa_handler = signal_handler;
@@ -132,54 +591,10 @@ int main(void)
     if (sigaction(SIGINT, &sa, NULL) == -1)
         printf("Failed to caught signal\r\n");
 
-    // ----------------------------------------------------
-    // 設定程式的兩種優先權
-    // ----------------------------------------------------
-    // Set PR (Priority) to RT(-99) 最高優先權
-    printf("Set priority ...\r\n");
-    struct sched_param param = {};
-    param.sched_priority = sched_get_priority_max(SCHED_FIFO);
-    printf("Using priority %i.", param.sched_priority);
-    if (sched_setscheduler(0, SCHED_FIFO, &param) == -1)
-        printf("sched_setscheduler failed\r\n"); // 錯誤還是可以跑
-
-    // Set NI (Niceness) to -19 最高優先權
-    pid_t pid = getpid(); // 獲得進程PID
-    printf("PID = %d\r\n", pid);
-    if (setpriority(PRIO_PROCESS, pid, -19))                                // 設置進程優先順序
-        printf("Warning: Failed to set priority: %s\r\n", strerror(errno)); // 錯誤還是可以跑
-
-    struct timespec wakeup_time;
-    
-    printf("Starting RT task with dt=%u ns.\r\n", PERIOD_NS);
-    clock_gettime(CLOCK_MONOTONIC, &wakeup_time);
-    wakeup_time.tv_nsec += PERIOD_NS;
-
-    last_cktime = clock_ns();
-    while (!bg_cancel)
-    {
-        //console_fps("loop");
-        const struct timespec cycletime = {0, PERIOD_NS};
-        wakeup_time = timespec_add(wakeup_time, cycletime);
-        int ret = clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &wakeup_time, NULL);
-        if (ret)
-        {
-            printf("clock_nanosleep(): %s\n", strerror(ret));
-            break;
-        }
-
-        //static int64 rt_check_time = 0;
-        //if (rt_check_time != clock_ms())
-        {
-            //rt_check_time = clock_ms();
-            // --------------------------------------------
-            cyclic_task();
-            // --------------------------------------------
-        }
-    }
+    /* start cyclic part */
+    simpletest(ETH_CH_NAME);
 
     printf("End program\r\n");
-    endwin();
 
     return (0);
 }

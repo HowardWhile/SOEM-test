@@ -35,7 +35,8 @@
 #define ETH_CH_NAME "eno1" // 通訊用的eth設備名稱
 // Slave的站號
 #define R2_EC0902 1
-#define NUMBER_OF_SLAVES 1
+#define ZeroErr_Driver_1 2
+#define NUMBER_OF_SLAVES 2
 // -------------------------------------
 // -------------------------------------
 
@@ -53,6 +54,7 @@ boolean dynamicY = FALSE;
 int usedmem;
 char IOmap[4096];
 boolean DO[32];
+boolean CtrlWord[16];
 
 int expectedWKC;
 boolean needlf;
@@ -60,11 +62,78 @@ volatile int wkc;
 boolean inOP;
 uint8 currentgroup = 0;
 
+int display_move = 5;   
+
+
 int64 last_cktime = 0;
 int64 max_dt = LLONG_MIN;
 int64 min_dt = LLONG_MAX;
 int64 sum_dt = 0;
 int64 cyc_count = 0;
+
+//-----------------------------------
+// Driver_Outputs
+//  0x1600      "R0PDO"     [ARRAY  maxsub(0x11 / 17)]
+//     0x00      "S"        [UNSIGNED8        RWRWRW]      0x03 / 3
+//     0x01      "S"        [UNSIGNED32       RWRWRW]      0x607a0020 / 1618608160
+//     0x02      "S"        [UNSIGNED32       RWRWRW]      0x60fe0020 / 1627258912
+//     0x03      "S"        [UNSIGNED32       RWRWRW]      0x60400010 / 1614807056
+//
+//  0x607a      "Target Position"       [VAR]
+//     0x00      "Target Position"      [INTEGER32        RWRWRW]      0x00000000 / 0
+//  0x60fe      "Digital outputs"       [VAR]
+//     0x00      "Digital outputs"      [UNSIGNED32       RWRWRW]      0x00000000 / 0
+//  0x6040      "Control Word"          [VAR]
+//     0x00      "Control Word"         [UNSIGNED16       RWRWRW]      0x0000 / 0
+typedef struct 
+{
+    int32_t Position;
+    uint32_t DigitalOutputs;
+    uint16_t CtrlWord;
+    /* data */
+}Driver_Outputs;
+
+// end of Driver_Outputs
+//-----------------------------------
+// Driver_Inputs
+// 0x1a00      "T0PDO"      [ARRAY  maxsub(0x11 / 17)]
+//     0x00      "S"        [UNSIGNED8        RWRWRW]      0x03 / 3
+//     0x01      "S"        [UNSIGNED32       RWRWRW]      0x60640020 / 1617166368
+//     0x02      "S"        [UNSIGNED32       RWRWRW]      0x60fd0020 / 1627193376
+//     0x03      "S"        [UNSIGNED32       RWRWRW]      0x60410010 / 1614872592
+// 0x6064      "Position Actual Value"          [VAR]
+//     0x00      "Position Actual Value"        [INTEGER32        R_R_R_]      0x0003bb05 / 244485
+// 0x60fd      "Digital inputs"                 [VAR]
+//     0x00      "Digital inputs"               [UNSIGNED32       R_R_R_]      0x00000000 / 0
+// 0x6041      "Status Word"                    [VAR]
+//     0x00      "Status Word"                  [UNSIGNED16       R_R_R_]      0x1208 / 4616
+
+typedef struct 
+{
+    int32_t Position;
+    uint32_t DigitalInputs;
+    uint16_t StatWord;
+    /* data */
+}Driver_Inputs;
+// end of Driver_Inputs
+//-----------------------------------
+
+typedef enum{
+    Mode_Position = 0,
+    Mode_Velocity
+}Driver_Modes;
+Driver_Modes driver_mode = Mode_Position;
+int32_t pos_target = 0;
+int32_t pos_feedback = 0;
+int32_t max_speed = 10;
+
+int32_t direct = 1;
+int32_t temp_speed = 0;
+
+boolean request_servo_on = 0;
+boolean request_servo_off = 0;
+
+
 
 
 static int sdo_write8(uint16 slave, uint16 index, uint8 subindex, uint8 value)
@@ -298,7 +367,7 @@ void cyclic_test()
     // ----------------------------------------------------
     // real-time 定時器
     // ----------------------------------------------------
-    console("[%ld ms] Starting RT task with dt=%u ns.", clock_ms(), PERIOD_NS);
+    console("Starting RT task with dt=%u ns.", PERIOD_NS);
     const int64 cycletime = PERIOD_NS; /* cycletime in ns */
 
     struct timespec wakeup_time;
@@ -346,12 +415,55 @@ void cyclic_test()
     }
 }
 
+int servo_on_step = 0;
+void servo_on_work()
+{
+    switch (servo_on_step++)
+    {
+    // 故障復位
+    case 0: 
+        CtrlWord[7] = FALSE;
+        break;    
+    case 1:
+        CtrlWord[7] = TRUE;
+        break;
+    case 2:
+        CtrlWord[7] = FALSE;
+        break;
+
+    case 3: // 關閉
+        CtrlWord[0] = FALSE;
+        CtrlWord[1] = TRUE;
+        CtrlWord[2] = TRUE;
+        CtrlWord[3] = FALSE;
+        break;
+
+    case 4: // 準備使能
+        CtrlWord[0] = TRUE;
+        CtrlWord[1] = TRUE;
+        CtrlWord[2] = TRUE;
+        CtrlWord[3] = FALSE;
+        break;
+
+    case 5: // 始能
+        CtrlWord[0] = TRUE;
+        CtrlWord[1] = TRUE;
+        CtrlWord[2] = TRUE;
+        CtrlWord[3] = TRUE;
+        break;
+    
+    default:
+        //servo_on_step = 0;
+        break;
+    } 
+}
+
 void cyclic_task()
 {
     // ----------------------------------------------------
     // real-time 定時器
     // ----------------------------------------------------
-    printf("[%ld ms] Starting RT task with dt=%u ns.\r\n", clock_ms(), PERIOD_NS);
+    console("Starting RT task with dt=%u ns.", PERIOD_NS);
     const int64 cycletime = PERIOD_NS; /* cycletime in ns */
 
     struct timespec wakeup_time;
@@ -361,6 +473,8 @@ void cyclic_task()
         return;
     }
 
+    pos_target = pos_feedback;
+
     // 初始統計時間
     last_cktime = ec_DCtime;
 
@@ -369,7 +483,6 @@ void cyclic_task()
     int64 toff = 0;
     int64 dt;
 
-    int display_move = 4;   
     while (!bg_cancel)
     {
         // sleep直到指定的時間點
@@ -392,10 +505,14 @@ void cyclic_task()
             // console("[debug] toff = %ld ns", toff);
         }
 
+        wkc = ec_receive_processdata(EC_TIMEOUTRET);
+        Driver_Inputs *iptr = (Driver_Inputs*)ec_slave[ZeroErr_Driver_1].inputs;
+        Driver_Outputs *optr = (Driver_Outputs*)ec_slave[ZeroErr_Driver_1].outputs;
+
         // -------------------------------------
         // renew inputs
         // -------------------------------------
-        wkc = ec_receive_processdata(EC_TIMEOUTRET);
+        pos_feedback = iptr->Position;
 
         // -------------------------------------
         // logic
@@ -409,12 +526,63 @@ void cyclic_task()
             }
         }
         
+        if(request_servo_on)
+        {
+            request_servo_on = FALSE;
+            pos_target = pos_feedback;
+            servo_on_work();
+        }
+
+        if(request_servo_off)
+        {
+            request_servo_off = FALSE;
+            servo_on_step = 0;
+            CtrlWord[0] = FALSE;     
+            CtrlWord[1] = FALSE;
+            CtrlWord[2] = FALSE;
+            CtrlWord[3] = FALSE;       
+        }
+
+        if(driver_mode == Mode_Position)
+        {
+
+        }
+        else if(driver_mode == Mode_Velocity)
+        {
+            //EXEC_INTERVAL(1)
+            {
+                int k_delta_speed = 1;
+                if (direct == 1)
+                {
+                    temp_speed += k_delta_speed;
+                    if (temp_speed > max_speed)
+                        temp_speed = max_speed;
+                }
+                else if (direct == -1)
+                {
+                    temp_speed -= k_delta_speed;
+                    if (temp_speed < -max_speed)
+                        temp_speed = -max_speed;
+                }
+                else
+                {
+                    if (temp_speed > 0)
+                        temp_speed -= k_delta_speed;
+                    else if (temp_speed < 0)
+                        temp_speed += k_delta_speed;
+                }
+
+                pos_target += temp_speed;
+            }
+            //EXEC_INTERVAL_END;
+
+        }
 
 
         // -------------------------------------
         // update outputs
         // ------------------------------------
-        
+        optr->Position = pos_target;
         for (size_t idx_bit = 0; idx_bit < 8; idx_bit++)
         {
             modifyBit8(&ec_slave[R2_EC0902].outputs[0], idx_bit, DO[0 * 8 + idx_bit]);
@@ -423,11 +591,13 @@ void cyclic_task()
             modifyBit8(&ec_slave[R2_EC0902].outputs[3], idx_bit, DO[3 * 8 + idx_bit]);
         }
 
-        ec_send_processdata();
+        for (size_t idx_bit = 0; idx_bit < 16; idx_bit++)
+        {
+            modifyBit16(&optr->CtrlWord, idx_bit, CtrlWord[idx_bit]);
+        }
 
-        // ------------------------------------
-        // display  info
-        // ------------------------------------
+
+        ec_send_processdata();
 
         // dt = ck_time2 - ck_time1; // ec rx 用時
         // dt = ck_time4 - ck_time3; // ec tx 用時
@@ -443,33 +613,49 @@ void cyclic_task()
             max_dt = dt;
 
         // 顯示
-        EXEC_INTERVAL(100)
-        {            
-            consoler("cyc_count: %ld, Latency:(min, max, avg)us = (%ld, %ld, %.2f) T:%ld+(%3ld)ns ****",
-                     cyc_count,
-                     min_dt / 1000, max_dt / 1000, (double)sum_dt / cyc_count / 1000,
-                     ec_DCtime, toff);
+        EXEC_INTERVAL(100)        
+        {
+            int NLcount = 0;
+            console("cyc_count: %ld, Latency:(min, max, avg)us = (%ld, %ld, %.2f) T:%ld+(%3ld)ns ****",
+                    cyc_count,
+                    min_dt / 1000, max_dt / 1000, (double)sum_dt / cyc_count / 1000,
+                    ec_DCtime, toff);
+            NLcount++;
+
+            console("---- IOmap infomation ----");
+            NLcount++;
+            for (int idx = 0; idx < usedmem; idx++)
+            {
+                printf("%02X ", (IOmap[idx]) & 0xFF);
+            }
+            printf("  ----  \r\n");
+            NLcount++;
+
+            console("---- driver infomation ----");
+            NLcount++;
+            printf("pose(output, input):\t %10d %10d, speed(max, tmp): %d, %d ---- \r\n", optr->Position, iptr->Position, max_speed, temp_speed);
+            NLcount++;
+            //printf("DIO(output, input): \t 0x%X 0x%X\r\n", optr->DigitalOutputs, iptr->DigitalInputs);
+            printf("(CtrlWord, StatWord)):\t");
+            printf("|%5d = " ,optr->CtrlWord);
+            printBinary(optr->CtrlWord);
+            printf("|%5d = " ,iptr->StatWord);
+            printBinary(iptr->StatWord);
+            printf(" ----\r\n");
+            NLcount++;
+
+            fflush(stdout);
+            MOVEUP(NLcount);
+
+            //printf("accPosition %d", iptr->Position);
+            // for (int idx = 0; idx < (int)ec_slave[R2_EC0902].Obytes; idx++)
+            // {
+            //     printf("%02X ", ec_slave[R2_EC0902].outputs[idx]);
+            // }    
         }
         EXEC_INTERVAL_END
-
-        if (wkc >= expectedWKC)
-        {
-            // printf("\t\tProcessdata cycle %4d, WKC %d , O:", cyc_count++, wkc);
-
-            // for (int j = 0; j < 4; j++)
-            // {
-            //     printf(" %2.2x", *(ec_slave[0].outputs + j));
-            // }
-
-            // printf(" I:");
-            // for (int j = 0; j < 4; j++)
-            // {
-            //     printf(" %2.2x", *(ec_slave[0].inputs + j));
-            // }
-            // printf(" T:%" PRId64 "\r", ec_DCtime);
-            // needlf = TRUE;f
-        }
     }
+    
     MOVEDOWN(display_move);
 
 }
@@ -582,7 +768,7 @@ void simpletest(char *ifname)
         /* find and auto-config slaves */
         if (ec_config_init(FALSE) > 0)
         {
-            console("%d slaves found and configured.\r\n", ec_slavecount);
+            console("%d slaves found and configured.", ec_slavecount);
 
             // list all slave name
             console("---- slave name ----");
@@ -590,13 +776,13 @@ void simpletest(char *ifname)
             {
                 console("[slave:%d] name: %s", slave_id, ec_slave[slave_id].name);
             }
-            console(" ");
 
             memset(DO, 0, sizeof(DO));
 
-
+            console("---- slave config ----");
+            
             ec_slave[R2_EC0902].PO2SOconfig = setupDeltaIO;
-
+            ec_slave[ZeroErr_Driver_1].PO2SOconfig = setupZeroErrDriver;
             usedmem = ec_config_map(&IOmap);
             console("IOmap address %p used memsize %d", IOmap, usedmem);
             console("Slaves mapped state to SAFE_OP.");
@@ -631,9 +817,9 @@ void simpletest(char *ifname)
             }
             //print_ec_group(ec_group[0]);
             expectedWKC = (ec_group[0].outputsWKC * 2) + ec_group[0].inputsWKC;
-            console("Calculated workcounter %d", expectedWKC);
+            console("Calculated workcounter %d", expectedWKC);    
 
-            printf("Request operational state for all slaves\r\n");
+            console("Request operational state for all slaves");
             ec_slave[0].state = EC_STATE_OPERATIONAL;
             /* send one valid process data to make outputs in slaves happy*/
             ec_send_processdata();
@@ -646,7 +832,7 @@ void simpletest(char *ifname)
             ec_receive_processdata(EC_TIMEOUTRET);
 
             /* wait for all slaves to reach OP state */
-            consoler("wait for all slaves to reach OP state");
+            console("wait for all slaves to reach OP state");
             
             ck_time = clock_ms();
             while (!bg_cancel && (ec_statecheck(0, EC_STATE_OPERATIONAL, EC_TIMEOUTRET) != EC_STATE_OPERATIONAL))
@@ -659,7 +845,6 @@ void simpletest(char *ifname)
                 }
                 consoler("wait for all slaves to reach OP state (%.1fs)...", (float32)(k_timeout - dt) / 1000);
             }
-            printf("\r\n");
 
             if (ec_slave[0].state == EC_STATE_OPERATIONAL)
             {
@@ -816,7 +1001,8 @@ OSAL_THREAD_FUNC keyboard(void *ptr)
         if (isdigit(ch))
         {
             int idx = ch - '0';
-            DO[idx] = !DO[idx];
+            //DO[idx] = !DO[idx];
+            CtrlWord[idx] = !CtrlWord[idx];
         }
 
         switch (ch)
@@ -824,7 +1010,7 @@ OSAL_THREAD_FUNC keyboard(void *ptr)
         case ' ':
             dynamicY = !dynamicY;
             break;
-        case 'r':
+        case 'i':
             max_dt = LLONG_MIN;
             min_dt = LLONG_MAX;
             sum_dt = 0;
@@ -835,12 +1021,68 @@ OSAL_THREAD_FUNC keyboard(void *ptr)
             bg_cancel = 1;
             break;
 
+        // case 'a':
+        //     sdo_write8(ZeroErr_Driver_1, 0x4602, 0, 0x0);
+        //     break;
+        // case 'd':
+        //     sdo_write8(ZeroErr_Driver_1, 0x4602, 0, 0x1);
+        //     break;
+
+        // 設定位置
+        case 'w':
+            driver_mode = Mode_Position;
+            pos_target += max_speed;
+            break;
+        case 's':
+            driver_mode = Mode_Position;
+            pos_target = pos_feedback;
+            break;
+        case 'x':
+            driver_mode = Mode_Position;
+            pos_target -= max_speed;
+            break;
+
+        // 設定速度
+        case 'e':
+            max_speed += 10;
+            break;
+        case 'd':
+            max_speed = 10;
+            break;
+        case 'c':
+            max_speed -= 10;
+            if(max_speed < 1)
+                max_speed = 1;
+            break;
+
+        // 持續旋轉
+        case 'r':
+            driver_mode = Mode_Velocity;
+            direct = 1;
+            break;
+        case 'f':
+            driver_mode = Mode_Velocity;
+            direct = 0;
+            break;
+        case 'v':
+            driver_mode = Mode_Velocity;
+            direct = -1;
+            break;
+
+        // servo
+        case 'o':
+        request_servo_on = TRUE;
+        break;
+        case 'p':
+        request_servo_off = TRUE;
+        break;
+
         default:
             break;
         }
 
         // printf("[keyboard] press (%c) (%d)\r\r\n", ch, ch);
-        osal_usleep(10000);
+        osal_usleep(10000); 
     }
 
     return;
@@ -876,9 +1118,7 @@ int main(void)
     /* create thread to handle slave error handling in OP */
     //      pthread_create( &thread1, NULL, (void *) &ecatcheck, (void*) &ctime);
 
-    printf("%s\r\n", clock_now());
-
-    set_latency_target(); // 消除系统时钟偏移
+    set_latency_target(); // 消除系統時鐘的偏移
 
     osal_thread_create(&bg_keyboard, 2048, &keyboard, (void *)&ctime);
     usleep(100);
