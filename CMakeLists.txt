@@ -115,5 +115,6 @@ if(BUILD_TESTS)
   add_subdirectory(test/linux/delta_io)
   add_subdirectory(test/linux/test_driver)
   add_subdirectory(test/linux/zero_err_driver)
+  add_subdirectory(test/linux/ipd_driver)
   
 endif()
