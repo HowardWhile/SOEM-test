@@ -654,25 +654,8 @@ void cyclic_task()
             // }    
         }
         EXEC_INTERVAL_END
-
-        if (wkc >= expectedWKC)
-        {
-            // printf("\t\tProcessdata cycle %4d, WKC %d , O:", cyc_count++, wkc);
-
-            // for (int j = 0; j < 4; j++)
-            // {
-            //     printf(" %2.2x", *(ec_slave[0].outputs + j));
-            // }
-
-            // printf(" I:");
-            // for (int j = 0; j < 4; j++)
-            // {
-            //     printf(" %2.2x", *(ec_slave[0].inputs + j));
-            // }
-            // printf(" T:%" PRId64 "\r", ec_DCtime);
-            // needlf = TRUE;f
-        }
     }
+    
     MOVEDOWN(display_move);
 
 }
