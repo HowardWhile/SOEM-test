@@ -34,9 +34,9 @@
 // -------------------------------------
 #define ETH_CH_NAME "eno1" // 通訊用的eth設備名稱
 // Slave的站號
-#define R2_EC0902 1
-#define ZeroErr_Driver_1 2
-#define NUMBER_OF_SLAVES 2
+#define IPD_1 1
+#define IPD_2 2
+#define IPD_3 3
 // -------------------------------------
 // -------------------------------------
 
@@ -53,8 +53,6 @@ boolean dynamicY = FALSE;
 
 int usedmem;
 char IOmap[4096];
-boolean DO[32];
-boolean CtrlWord[16];
 
 int expectedWKC;
 boolean needlf;
@@ -62,9 +60,8 @@ volatile int wkc;
 boolean inOP;
 uint8 currentgroup = 0;
 
+
 int display_move = 5;   
-
-
 int64 last_cktime = 0;
 int64 max_dt = LLONG_MIN;
 int64 min_dt = LLONG_MAX;
@@ -73,73 +70,259 @@ int64 cyc_count = 0;
 
 //-----------------------------------
 // Driver_Outputs
-//  0x1600      "R0PDO"     [ARRAY  maxsub(0x11 / 17)]
-//     0x00      "S"        [UNSIGNED8        RWRWRW]      0x03 / 3
-//     0x01      "S"        [UNSIGNED32       RWRWRW]      0x607a0020 / 1618608160
-//     0x02      "S"        [UNSIGNED32       RWRWRW]      0x60fe0020 / 1627258912
-//     0x03      "S"        [UNSIGNED32       RWRWRW]      0x60400010 / 1614807056
+// 0x1600      "Output mapping 0"                            [RECORD  maxsub(0x19 / 25)]
+//     0x00      "SubIndex 000"                                [UNSIGNED8        R_R_R_]      0x19 / 25
+//     0x01      "SubIndex 001"                                [UNSIGNED32       R_R_R_]      0x70000020 / 1879048224
+//     0x02      "SubIndex 002"                                [UNSIGNED32       R_R_R_]      0x70010120 / 1879114016
+//     0x03      "SubIndex 003"                                [UNSIGNED32       R_R_R_]      0x70010210 / 1879114256
+//     0x04      "SubIndex 004"                                [UNSIGNED32       R_R_R_]      0x70010310 / 1879114512
+//     0x05      "SubIndex 005"                                [UNSIGNED32       R_R_R_]      0x70010410 / 1879114768
+//     0x06      "SubIndex 006"                                [UNSIGNED32       R_R_R_]      0x70010510 / 1879115024
+//     0x07      "SubIndex 007"                                [UNSIGNED32       R_R_R_]      0x70010620 / 1879115296
+//     0x08      "SubIndex 008"                                [UNSIGNED32       R_R_R_]      0x70010720 / 1879115552
+//     0x09      "SubIndex 009"                                [UNSIGNED32       R_R_R_]      0x70010810 / 1879115792
+//     0x0a      "SubIndex 010"                                [UNSIGNED32       R_R_R_]      0x70010910 / 1879116048
+//     0x0b      "SubIndex 011"                                [UNSIGNED32       R_R_R_]      0x70010a10 / 1879116304
+//     0x0c      "SubIndex 012"                                [UNSIGNED32       R_R_R_]      0x70010b10 / 1879116560
+//     0x0d      "SubIndex 013"                                [UNSIGNED32       R_R_R_]      0x70010c20 / 1879116832
+//     0x0e      "SubIndex 014"                                [UNSIGNED32       R_R_R_]      0x70020120 / 1879179552
+//     0x0f      "SubIndex 015"                                [UNSIGNED32       R_R_R_]      0x70020210 / 1879179792
+//     0x10      "SubIndex 016"                                [UNSIGNED32       R_R_R_]      0x70020310 / 1879180048
+//     0x11      "SubIndex 017"                                [UNSIGNED32       R_R_R_]      0x70020410 / 1879180304
+//     0x12      "SubIndex 018"                                [UNSIGNED32       R_R_R_]      0x70020510 / 1879180560
+//     0x13      "SubIndex 019"                                [UNSIGNED32       R_R_R_]      0x70020620 / 1879180832
+//     0x14      "SubIndex 020"                                [UNSIGNED32       R_R_R_]      0x70020720 / 1879181088
+//     0x15      "SubIndex 021"                                [UNSIGNED32       R_R_R_]      0x70020810 / 1879181328
+//     0x16      "SubIndex 022"                                [UNSIGNED32       R_R_R_]      0x70020910 / 1879181584
+//     0x17      "SubIndex 023"                                [UNSIGNED32       R_R_R_]      0x70020a10 / 1879181840
+//     0x18      "SubIndex 024"                                [UNSIGNED32       R_R_R_]      0x70020b10 / 1879182096
+//     0x19      "SubIndex 025"                                [UNSIGNED32       R_R_R_]      0x70020c20 / 1879182368
 //
-//  0x607a      "Target Position"       [VAR]
-//     0x00      "Target Position"      [INTEGER32        RWRWRW]      0x00000000 / 0
-//  0x60fe      "Digital outputs"       [VAR]
-//     0x00      "Digital outputs"      [UNSIGNED32       RWRWRW]      0x00000000 / 0
-//  0x6040      "Control Word"          [VAR]
-//     0x00      "Control Word"         [UNSIGNED16       RWRWRW]      0x0000 / 0
+// 0x7001      "IPDCmdData1"                                 [RECORD  maxsub(0x0c / 12)]
+//     0x00      "SubIndex 000"                                [UNSIGNED8        R_R_R_]      0x0c / 12
+
+//     0x01      "Axis1PosCmd"                                 [INTEGER32        RWRWRW]      0x00000000 / 0
+//     0x02      "Axis1VelCmd"                                 [INTEGER16        RWRWRW]      0x0000 / 0
+//     0x03      "Axis1CurCmd"                                 [INTEGER16        RWRWRW]      0x0000 / 0
+//     0x04      "Axis1CtlCmd"                                 [UNSIGNED16       RWRWRW]      0x0000 / 0
+//     0x05      "Axis1AdrsCmd"                                [UNSIGNED16       RWRWRW]      0x0000 / 0
+//     0x06      "Axis1ParCmd"                                 [INTEGER32        RWRWRW]      0x00000000 / 0
+
+//     0x07      "Axis2PosCmd"                                 [INTEGER32        RWRWRW]      0x00000000 / 0
+//     0x08      "Axis2VelCmd"                                 [INTEGER16        RWRWRW]      0x0000 / 0
+//     0x09      "Axis2CurCmd"                                 [INTEGER16        RWRWRW]      0x0000 / 0
+//     0x0a      "Axis2CtlCmd"                                 [UNSIGNED16       RWRWRW]      0x0000 / 0
+//     0x0b      "Axis2AdrsCmd"                                [UNSIGNED16       RWRWRW]      0x0000 / 0
+//     0x0c      "Axis2ParCmd"                                 [INTEGER32        RWRWRW]      0x00000000 / 0
+
+// 0x7002      "IPDCmdData2"                                 [RECORD  maxsub(0x0c / 12)]
+//     0x00      "SubIndex 000"                                [UNSIGNED8        R_R_R_]      0x0c / 12
+
+//     0x01      "Axis3PosCmd"                                 [INTEGER32        RWRWRW]      0x00000000 / 0
+//     0x02      "Axis3VelCmd"                                 [INTEGER16        RWRWRW]      0x0000 / 0
+//     0x03      "Axis3CurCmd"                                 [INTEGER16        RWRWRW]      0x0000 / 0
+//     0x04      "Axis3CtlCmd"                                 [UNSIGNED16       RWRWRW]      0x0000 / 0
+//     0x05      "Axis3AdrsCmd"                                [UNSIGNED16       RWRWRW]      0x0000 / 0
+//     0x06      "Axis3ParCmd"                                 [INTEGER32        RWRWRW]      0x00000000 / 0
+
+//     0x07      "Axis4PosCmd"                                 [INTEGER32        RWRWRW]      0x00000000 / 0
+//     0x08      "Axis4VelCmd"                                 [INTEGER16        RWRWRW]      0x0000 / 0
+//     0x09      "Axis4CurCmd"                                 [INTEGER16        RWRWRW]      0x0000 / 0
+//     0x0a      "Axis4CtlCmd"                                 [UNSIGNED16       RWRWRW]      0x0000 / 0
+//     0x0b      "Axis4AdrsCmd"                                [UNSIGNED16       RWRWRW]      0x0000 / 0
+//     0x0c      "Axis4ParCmd"                                 [INTEGER32        RWRWRW]      0x00000000 / 0
+
 typedef struct 
 {
-    int32_t Position;
-    uint32_t DigitalOutputs;
-    uint16_t CtrlWord;
-    /* data */
+    int32_t  Axis1PosCmd;
+    int16_t  Axis1VelCmd;
+    int16_t  Axis1CurCmd;
+    uint16_t Axis1CtlCmd;
+    uint16_t Axis1AdrsCmd;
+    int32_t  Axis1ParCmd;
+
+    int32_t  Axis2PosCmd;
+    int16_t  Axis2VelCmd;
+    int16_t  Axis2CurCmd;
+    uint16_t Axis2CtlCmd;
+    uint16_t Axis2AdrsCmd;
+    int32_t  Axis2ParCmd;
+
+    int32_t  Axis3PosCmd;
+    int16_t  Axis3VelCmd;
+    int16_t  Axis3CurCmd;
+    uint16_t Axis3CtlCmd;
+    uint16_t Axis3AdrsCmd;
+    int32_t  Axis3ParCmd;
+
+    int32_t  Axis4PosCmd;
+    int16_t  Axis4VelCmd;
+    int16_t  Axis4CurCmd;
+    uint16_t Axis4CtlCmd;
+    uint16_t Axis4AdrsCmd;
+    int32_t  Axis4ParCmd;
 }Driver_Outputs;
 
-// end of Driver_Outputs
 //-----------------------------------
 // Driver_Inputs
-// 0x1a00      "T0PDO"      [ARRAY  maxsub(0x11 / 17)]
-//     0x00      "S"        [UNSIGNED8        RWRWRW]      0x03 / 3
-//     0x01      "S"        [UNSIGNED32       RWRWRW]      0x60640020 / 1617166368
-//     0x02      "S"        [UNSIGNED32       RWRWRW]      0x60fd0020 / 1627193376
-//     0x03      "S"        [UNSIGNED32       RWRWRW]      0x60410010 / 1614872592
-// 0x6064      "Position Actual Value"          [VAR]
-//     0x00      "Position Actual Value"        [INTEGER32        R_R_R_]      0x0003bb05 / 244485
-// 0x60fd      "Digital inputs"                 [VAR]
-//     0x00      "Digital inputs"               [UNSIGNED32       R_R_R_]      0x00000000 / 0
-// 0x6041      "Status Word"                    [VAR]
-//     0x00      "Status Word"                  [UNSIGNED16       R_R_R_]      0x1208 / 4616
+// 0x1a00      "Input mapping 0"                             [RECORD  maxsub(0x19 / 25)]
+//     0x00      "SubIndex 000"                                [UNSIGNED8        R_R_R_]      0x19 / 25
+//     0x01      "SubIndex 001"                                [UNSIGNED32       R_R_R_]      0x60000020 / 1610612768
+//     0x02      "SubIndex 002"                                [UNSIGNED32       R_R_R_]      0x60010120 / 1610678560
+//     0x03      "SubIndex 003"                                [UNSIGNED32       R_R_R_]      0x60010210 / 1610678800
+//     0x04      "SubIndex 004"                                [UNSIGNED32       R_R_R_]      0x60010310 / 1610679056
+//     0x05      "SubIndex 005"                                [UNSIGNED32       R_R_R_]      0x60010410 / 1610679312
+//     0x06      "SubIndex 006"                                [UNSIGNED32       R_R_R_]      0x60010510 / 1610679568
+//     0x07      "SubIndex 007"                                [UNSIGNED32       R_R_R_]      0x60010620 / 1610679840
+//     0x08      "SubIndex 008"                                [UNSIGNED32       R_R_R_]      0x60010720 / 1610680096
+//     0x09      "SubIndex 009"                                [UNSIGNED32       R_R_R_]      0x60010810 / 1610680336
+//     0x0a      "SubIndex 010"                                [UNSIGNED32       R_R_R_]      0x60010910 / 1610680592
+//     0x0b      "SubIndex 011"                                [UNSIGNED32       R_R_R_]      0x60010a10 / 1610680848
+//     0x0c      "SubIndex 012"                                [UNSIGNED32       R_R_R_]      0x60010b10 / 1610681104
+//     0x0d      "SubIndex 013"                                [UNSIGNED32       R_R_R_]      0x60010c20 / 1610681376
+//     0x0e      "SubIndex 014"                                [UNSIGNED32       R_R_R_]      0x60020120 / 1610744096
+//     0x0f      "SubIndex 015"                                [UNSIGNED32       R_R_R_]      0x60020210 / 1610744336
+//     0x10      "SubIndex 016"                                [UNSIGNED32       R_R_R_]      0x60020310 / 1610744592
+//     0x11      "SubIndex 017"                                [UNSIGNED32       R_R_R_]      0x60020410 / 1610744848
+//     0x12      "SubIndex 018"                                [UNSIGNED32       R_R_R_]      0x60020510 / 1610745104
+//     0x13      "SubIndex 019"                                [UNSIGNED32       R_R_R_]      0x60020620 / 1610745376
+//     0x14      "SubIndex 020"                                [UNSIGNED32       R_R_R_]      0x60020720 / 1610745632
+//     0x15      "SubIndex 021"                                [UNSIGNED32       R_R_R_]      0x60020810 / 1610745872
+//     0x16      "SubIndex 022"                                [UNSIGNED32       R_R_R_]      0x60020910 / 1610746128
+//     0x17      "SubIndex 023"                                [UNSIGNED32       R_R_R_]      0x60020a10 / 1610746384
+//     0x18      "SubIndex 024"                                [UNSIGNED32       R_R_R_]      0x60020b10 / 1610746640
+//     0x19      "SubIndex 025"                                [UNSIGNED32       R_R_R_]      0x60020c20 / 1610746912
+
+// 0x6000      "GPIO_INPUTS"                                 [VAR]
+//     0x00      "GPIO_INPUTS"                                 [UNSIGNED32       R_R_R_]      0x00000000 / 0
+// 0x6001      "IPDFbkData1"                                 [RECORD  maxsub(0x0c / 12)]
+//     0x00      "SubIndex 000"                                [UNSIGNED8        R_R_R_]      0x0c / 12
+
+//     0x01      "Axis1PosFbk"                                 [INTEGER32        R_R_R_]      0x00000000 / 0
+//     0x02      "Axis1VelFbk"                                 [INTEGER16        R_R_R_]      0x0000 / 0
+//     0x03      "Axis1CurFbk"                                 [INTEGER16        R_R_R_]      0x0000 / 0
+//     0x04      "Axis1CtlFbk"                                 [UNSIGNED16       R_R_R_]      0x0000 / 0
+//     0x05      "Axis1AdrsFbk"                                [UNSIGNED16       R_R_R_]      0x0000 / 0
+//     0x06      "Axis1ParFbk"                                 [INTEGER32        R_R_R_]      0x00000000 / 0
+
+//     0x07      "Axi2PosFbk"                                  [INTEGER32        R_R_R_]      0x00000000 / 0
+//     0x08      "Axis2VelFbk"                                 [INTEGER16        R_R_R_]      0x0000 / 0
+//     0x09      "Axis2CurFbk"                                 [INTEGER16        R_R_R_]      0x0000 / 0
+//     0x0a      "Axis2CtlFbk"                                 [UNSIGNED16       R_R_R_]      0x0000 / 0
+//     0x0b      "Axis2AdrsFbk"                                [UNSIGNED16       R_R_R_]      0x0000 / 0
+//     0x0c      "Axis2ParFbk"                                 [INTEGER32        R_R_R_]      0x00000000 / 0
+// 0x6002      "IPDFbkData2"                                 [RECORD  maxsub(0x0c / 12)]
+//     0x00      "SubIndex 000"                                [UNSIGNED8        R_R_R_]      0x0c / 12
+
+//     0x01      "Axis3PosFbk"                                 [INTEGER32        R_R_R_]      0x00000000 / 0
+//     0x02      "Axis3VelFbk"                                 [INTEGER16        R_R_R_]      0x0000 / 0
+//     0x03      "Axis3CurFbk"                                 [INTEGER16        R_R_R_]      0x0000 / 0
+//     0x04      "Axis3CtlFbk"                                 [UNSIGNED16       R_R_R_]      0x0000 / 0
+//     0x05      "Axis3AdrsFbk"                                [UNSIGNED16       R_R_R_]      0x0000 / 0
+//     0x06      "Axis3ParFbk"                                 [INTEGER32        R_R_R_]      0x00000000 / 0
+
+//     0x07      "Axis4PosFbk"                                 [INTEGER32        R_R_R_]      0x00000000 / 0
+//     0x08      "Axis4VelFbk"                                 [INTEGER16        R_R_R_]      0x0000 / 0
+//     0x09      "Axis4CurFbk"                                 [INTEGER16        R_R_R_]      0x0000 / 0
+//     0x0a      "Axis4CtlFbk"                                 [UNSIGNED16       R_R_R_]      0x0000 / 0
+//     0x0b      "Axis4AdrsFbk"                                [UNSIGNED16       R_R_R_]      0x0000 / 0
+//     0x0c      "Axis4ParFbk"                                 [INTEGER32        R_R_R_]      0x00000000 / 0
 
 typedef struct 
 {
-    int32_t Position;
-    uint32_t DigitalInputs;
-    uint16_t StatWord;
-    /* data */
+    int32_t  GPIO_INPUTS;
+
+    int32_t  Axis1PosFbk;
+    int16_t  Axis1VelFbk;
+    int16_t  Axis1CurFbk;
+    uint16_t Axis1CtlFbk;
+    uint16_t Axis1AdrsFbk;
+    int32_t  Axis1ParFbk;
+
+    int32_t  Axis2PosFbk;
+    int16_t  Axis2VelFbk;
+    int16_t  Axis2CurFbk;
+    uint16_t Axis2CtlFbk;
+    uint16_t Axis2AdrsFbk;
+    int32_t  Axis2ParFbk;
+
+    int32_t  Axis3PosFbk;
+    int16_t  Axis3VelFbk;
+    int16_t  Axis3CurFbk;
+    uint16_t Axis3CtlFbk;
+    uint16_t Axis3AdrsFbk;
+    int32_t  Axis3ParFbk;
+
+    int32_t  Axis4PosFbk;
+    int16_t  Axis4VelFbk;
+    int16_t  Axis4CurFbk;
+    uint16_t Axis4CtlFbk;
+    uint16_t Axis4AdrsFbk;
+    int32_t  Axis4ParFbk;
 }Driver_Inputs;
-// end of Driver_Inputs
+
 //-----------------------------------
-
-typedef enum{
-    Mode_Position = 0,
-    Mode_Velocity
-}Driver_Modes;
-Driver_Modes driver_mode = Mode_Position;
-int32_t pos_target = 0;
-int32_t pos_feedback = 0;
-int32_t max_speed = 10;
-
-int32_t direct = 1;
-int32_t temp_speed = 0;
-
-boolean request_servo_on = 0;
-boolean request_servo_off = 0;
-
-
-
-
-static int sdo_write8(uint16 slave, uint16 index, uint8 subindex, uint8 value)
+void print_driver_io(
+    int32_t pos_cmd, int32_t pos_fbk,
+    int16_t vel_cmd, int16_t vel_fbk,
+    int16_t cur_cmd, int16_t cur_fbk,
+    uint16_t ctl_cmd, uint16_t ctl_fbk,
+    uint16_t adr_cmd, uint16_t adr_fbk,
+    int32_t par_cmd, int32_t par_fbk)
 {
-    return ec_SDOwrite(slave, index, subindex, FALSE, sizeof(uint8), &value, EC_TIMEOUTRXM);
+    //console(" Pos Cmd: %d\tPos Fbk: %d", pos_cmd, pos_fbk);
+    //console(" Vel Cmd: %d\tVel Fbk: %d", vel_cmd, vel_fbk);
+    console(" Cur Cmd: %d\tCur Fbk: %d", cur_cmd, cur_fbk);
+    //console(" Ctl Cmd: %d\tCtl Fbk: %d", ctl_cmd, ctl_fbk);
+    console(" Adr Cmd: %d\tAdr Fbk: %d", adr_cmd, adr_fbk);
+    console(" Par Cmd: %d\tPar Fbk: %d", par_cmd, par_fbk);
+
+    return;
 }
+void print_driver_io_ptr(Driver_Inputs* in, Driver_Outputs* out)
+{
+    console(" Axis1");
+    print_driver_io(
+        out->Axis1PosCmd,  in->Axis1PosFbk,
+        out->Axis1VelCmd,  in->Axis1VelFbk,
+        out->Axis1CurCmd,  in->Axis1CurFbk,
+        out->Axis1CtlCmd,  in->Axis1CtlFbk,
+        out->Axis1AdrsCmd, in->Axis1AdrsFbk,
+        out->Axis1ParCmd,  in->Axis1ParFbk );    
+
+    console(" Axis2");
+    print_driver_io(
+        out->Axis2PosCmd,  in->Axis2PosFbk,
+        out->Axis2VelCmd,  in->Axis2VelFbk,
+        out->Axis2CurCmd,  in->Axis2CurFbk,
+        out->Axis2CtlCmd,  in->Axis2CtlFbk,
+        out->Axis2AdrsCmd, in->Axis2AdrsFbk,
+        out->Axis2ParCmd,  in->Axis2ParFbk );  
+
+    console(" Axis3");
+    print_driver_io(
+        out->Axis3PosCmd,  in->Axis3PosFbk,
+        out->Axis3VelCmd,  in->Axis3VelFbk,
+        out->Axis3CurCmd,  in->Axis3CurFbk,
+        out->Axis3CtlCmd,  in->Axis3CtlFbk,
+        out->Axis3AdrsCmd, in->Axis3AdrsFbk,
+        out->Axis3ParCmd,  in->Axis3ParFbk );  
+
+    console(" Axis4");
+     print_driver_io(
+        out->Axis4PosCmd,  in->Axis4PosFbk,
+        out->Axis4VelCmd,  in->Axis4VelFbk,
+        out->Axis4CurCmd,  in->Axis4CurFbk,
+        out->Axis4CtlCmd,  in->Axis4CtlFbk,
+        out->Axis4AdrsCmd, in->Axis4AdrsFbk,
+        out->Axis4ParCmd,  in->Axis4ParFbk );         
+
+}
+
+// static int sdo_write8(uint16 slave, uint16 index, uint8 subindex, uint8 value)
+// {
+//     return ec_SDOwrite(slave, index, subindex, FALSE, sizeof(uint8), &value, EC_TIMEOUTRXM);
+// }
 
 static inline void printBinary(uint16_t num)
 {
@@ -219,60 +402,11 @@ int setNI(int Niceness)
     return ret;
 }
 
-int setupDeltaIO(uint16 slave)
-{
-    int wkc = 0;
-    console("[slave:%d] DELTA RC-EC0902 setup", slave);
-
-    // Active all DO port ----------------------------------------------------------
-    // 此物件可以設定輸出通道是否允許變更(8 個輸出通道為一組)。0 代表不允許改變狀態，1 代表允許改變狀態。
-    // 0x2001      "Active DO Enable"                          [RECORD  maxsub(0x04 / 4)]
-    //   0x00      "SubIndex 000"                              [UNSIGNED8        R_R_R_]      0x04 / 4
-    //   0x01      "Active Port2 DO CH0~7 Enable"              [UNSIGNED8        RWRWRW]      0xff / 255
-    //   0x02      "Active Port2 DO CH8~15 Enable"             [UNSIGNED8        RWRWRW]      0xff / 255
-    //   0x03      "Active Port3 DO CH0~7 Enable"              [UNSIGNED8        RWRWRW]      0xff / 255
-    //   0x04      "Active Port3 DO CH8~15 Enable"             [UNSIGNED8        RWRWRW]      0xff / 255
-    wkc += sdo_write8(slave, 0x2001, 1, 0xFF);
-    wkc += sdo_write8(slave, 0x2001, 2, 0xFF);
-    wkc += sdo_write8(slave, 0x2001, 3, 0xFF);
-    wkc += sdo_write8(slave, 0x2001, 4, 0xFF);
-
-    // Error Mode disable ----------------------------------------------------------
-    // 0 代表維持原本輸出值，1 代表參考Error Mode Output Value(6207h)的設定值。
-    // 0x6206      "DO Error Mode Enable"                        [RECORD  maxsub(0x04 / 4)]
-    //   0x00      "SubIndex 000"                                [UNSIGNED8        R_R_R_]      0x04 / 4
-    //   0x01      "Port2 DO Ch0~7 Error Mode Enable"            [UNSIGNED8        RWRWRW]      0x00 / 0
-    //   0x02      "Port2 DO Ch8~15 Error Mode Enable"           [UNSIGNED8        RWRWRW]      0x00 / 0
-    //   0x03      "Port3 DO Ch0~7 Error Mode Enable"            [UNSIGNED8        RWRWRW]      0x00 / 0
-    //   0x04      "Port3 DO Ch8~15 Error Mode Enable"           [UNSIGNED8        RWRWRW]      0x00 / 0
-    wkc += sdo_write8(slave, 0x6206, 1, 0x0);
-    wkc += sdo_write8(slave, 0x6206, 2, 0x0);
-    wkc += sdo_write8(slave, 0x6206, 3, 0x0);
-    wkc += sdo_write8(slave, 0x6206, 4, 0x0);
-
-    // strncpy(ec_slave[slave].name, "IO", EC_MAXNAME);
-
-    if (wkc != 8)
-    {
-        console("[slave:%d] DELTA RC-EC0902 setup failed. wkc: %d", slave, wkc);
-        return -1;
-    }
-    else
-    {
-        console("[slave:%d] DELTA RC-EC0902 setup "LIGHT_GREEN"succeed."RESET, slave);
-        return 0;
-    }
-}
-
-int setupZeroErrDriver(uint16 slave)
+int setupIPDDriver(uint16 slave)
 {
     int wkc = 0;
     const int check_wkc = 2;
-    console("[slave:%d] ZeroErrDriver setup", slave);
-    // 釋放煞車
-    // 0x4602      "Release Brake"    [VAR]
-    //   0x00      "Release Brake"    [UNSIGNED32       RWRWRW]      0x00000000 / 0
-    //wkc += sdo_write8(slave, 0x4602, 0, 0x0);
+    console("[slave:%d] IPD Driver setup", slave);
 
     uint16 map_RxPDOassign[] = {0x0001, 0x1600}; // 0x1c12
     wkc += ec_SDOwrite(slave, 0x1c12, 0x00, TRUE, sizeof(map_RxPDOassign), &map_RxPDOassign, EC_TIMEOUTSAFE );
@@ -280,19 +414,15 @@ int setupZeroErrDriver(uint16 slave)
     uint16 map_TxPDOassign[] = {0x0001, 0x1A00}; // 0x1c13
     wkc += ec_SDOwrite(slave, 0x1c13, 0x00, TRUE, sizeof(map_TxPDOassign), &map_TxPDOassign, EC_TIMEOUTSAFE );
 
-    //wkc += ec_SDOwrite(slave, 0x1c13, 0x00, TRUE, sizeof(map_TxPDOassign), &map_TxPDOassign, EC_TIMEOUTSAFE );
-
-    //uint32 map_TxPDO[] = {0x0002, 0x60640020, 0x60FD0020};
-    //wkc += ec_SDOwrite(slave, 0x1A00, 0x00, TRUE, sizeof(map_TxPDO), &map_TxPDO, EC_TIMEOUTSAFE );
 
     if (wkc != check_wkc)
     {
-        console("[slave:%d] ZeroErrDriversetup "RED"failed."RESET" wkc: %d", slave, wkc);
+        console("[slave:%d] IPD Driver setup "RED"failed."RESET" wkc: %d", slave, wkc);
         return -1;
     }
     else
     {
-        console("[slave:%d] ZeroErrDriver setup "LIGHT_GREEN"succeed."RESET, slave);
+        console("[slave:%d] IPD Driver setup "LIGHT_GREEN"succeed."RESET, slave);
         return 0;
     }
 }
@@ -415,49 +545,6 @@ void cyclic_test()
     }
 }
 
-int servo_on_step = 0;
-void servo_on_work()
-{
-    switch (servo_on_step++)
-    {
-    // 故障復位
-    case 0: 
-        CtrlWord[7] = FALSE;
-        break;    
-    case 1:
-        CtrlWord[7] = TRUE;
-        break;
-    case 2:
-        CtrlWord[7] = FALSE;
-        break;
-
-    case 3: // 關閉
-        CtrlWord[0] = FALSE;
-        CtrlWord[1] = TRUE;
-        CtrlWord[2] = TRUE;
-        CtrlWord[3] = FALSE;
-        break;
-
-    case 4: // 準備使能
-        CtrlWord[0] = TRUE;
-        CtrlWord[1] = TRUE;
-        CtrlWord[2] = TRUE;
-        CtrlWord[3] = FALSE;
-        break;
-
-    case 5: // 始能
-        CtrlWord[0] = TRUE;
-        CtrlWord[1] = TRUE;
-        CtrlWord[2] = TRUE;
-        CtrlWord[3] = TRUE;
-        break;
-    
-    default:
-        //servo_on_step = 0;
-        break;
-    } 
-}
-
 void cyclic_task()
 {
     // ----------------------------------------------------
@@ -472,8 +559,6 @@ void cyclic_task()
         printf("clock_gettime failed\r\n");
         return;
     }
-
-    pos_target = pos_feedback;
 
     // 初始統計時間
     last_cktime = ec_DCtime;
@@ -506,103 +591,40 @@ void cyclic_task()
         }
 
         wkc = ec_receive_processdata(EC_TIMEOUTRET);
-        Driver_Inputs *iptr = (Driver_Inputs*)ec_slave[ZeroErr_Driver_1].inputs;
-        Driver_Outputs *optr = (Driver_Outputs*)ec_slave[ZeroErr_Driver_1].outputs;
+
+        // -------------------------------------
+        // IPD pdo point mapping
+        // -------------------------------------
+        Driver_Inputs *iptr_ipd[3];
+        iptr_ipd[0] = (Driver_Inputs*)ec_slave[IPD_1].inputs;
+        iptr_ipd[1] = (Driver_Inputs*)ec_slave[IPD_2].inputs;
+        iptr_ipd[2] = (Driver_Inputs*)ec_slave[IPD_3].inputs;
+
+        Driver_Outputs *optr_ipd[3];
+        optr_ipd[0] = (Driver_Outputs*)ec_slave[IPD_1].outputs;
+        optr_ipd[1] = (Driver_Outputs*)ec_slave[IPD_2].outputs;
+        optr_ipd[2] = (Driver_Outputs*)ec_slave[IPD_3].outputs;
 
         // -------------------------------------
         // renew inputs
         // -------------------------------------
-        pos_feedback = iptr->Position;
 
         // -------------------------------------
         // logic
-        // -------------------------------------
-        // 開關所有的Y
-        if (dynamicY && cyc_count % 100 == 0)
-        {        
-            for (size_t idx = 0; idx < 32; idx++)
-            {
-                DO[idx] = !DO[idx];
-            }
-        }
-        
-        if(request_servo_on)
-        {
-            request_servo_on = FALSE;
-            pos_target = pos_feedback;
-            servo_on_work();
-        }
-
-        if(request_servo_off)
-        {
-            request_servo_off = FALSE;
-            servo_on_step = 0;
-            CtrlWord[0] = FALSE;     
-            CtrlWord[1] = FALSE;
-            CtrlWord[2] = FALSE;
-            CtrlWord[3] = FALSE;       
-        }
-
-        if(driver_mode == Mode_Position)
-        {
-
-        }
-        else if(driver_mode == Mode_Velocity)
-        {
-            //EXEC_INTERVAL(1)
-            {
-                int k_delta_speed = 1;
-                if (direct == 1)
-                {
-                    temp_speed += k_delta_speed;
-                    if (temp_speed > max_speed)
-                        temp_speed = max_speed;
-                }
-                else if (direct == -1)
-                {
-                    temp_speed -= k_delta_speed;
-                    if (temp_speed < -max_speed)
-                        temp_speed = -max_speed;
-                }
-                else
-                {
-                    if (temp_speed > 0)
-                        temp_speed -= k_delta_speed;
-                    else if (temp_speed < 0)
-                        temp_speed += k_delta_speed;
-                }
-
-                pos_target += temp_speed;
-            }
-            //EXEC_INTERVAL_END;
-
-        }
-
+        // -------------------------------------      
 
         // -------------------------------------
         // update outputs
         // ------------------------------------
-        optr->Position = pos_target;
-        for (size_t idx_bit = 0; idx_bit < 8; idx_bit++)
-        {
-            modifyBit8(&ec_slave[R2_EC0902].outputs[0], idx_bit, DO[0 * 8 + idx_bit]);
-            modifyBit8(&ec_slave[R2_EC0902].outputs[1], idx_bit, DO[1 * 8 + idx_bit]);
-            modifyBit8(&ec_slave[R2_EC0902].outputs[2], idx_bit, DO[2 * 8 + idx_bit]);
-            modifyBit8(&ec_slave[R2_EC0902].outputs[3], idx_bit, DO[3 * 8 + idx_bit]);
-        }
 
-        for (size_t idx_bit = 0; idx_bit < 16; idx_bit++)
-        {
-            modifyBit16(&optr->CtrlWord, idx_bit, CtrlWord[idx_bit]);
-        }
-
-
+        // ------------------------------------
+        // send ethercat cmd 
+        // ------------------------------------
         ec_send_processdata();
 
-        // dt = ck_time2 - ck_time1; // ec rx 用時
-        // dt = ck_time4 - ck_time3; // ec tx 用時
-        // dt = ck_time4 - ck_time1; // 整體 用時
-
+        // ------------------------------------
+        // latency 
+        // ------------------------------------
         cyc_count++;
         sum_dt += dt;
 
@@ -612,52 +634,35 @@ void cyclic_task()
         if (dt > max_dt)
             max_dt = dt;
 
+        // ------------------------------------
         // 顯示
+        // ------------------------------------
         EXEC_INTERVAL(100)        
         {
-            int NLcount = 0;
+            for (size_t i = 0; i < 17; i++)
+            {
+                console("                                                       ");
+            }
+            MOVEUP(17);
+            
+
             console("cyc_count: %ld, Latency:(min, max, avg)us = (%ld, %ld, %.2f) T:%ld+(%3ld)ns ****",
                     cyc_count,
                     min_dt / 1000, max_dt / 1000, (double)sum_dt / cyc_count / 1000,
                     ec_DCtime, toff);
-            NLcount++;
 
-            console("---- IOmap infomation ----");
-            NLcount++;
-            for (int idx = 0; idx < usedmem; idx++)
+            for (size_t idx = 0; idx < 1; idx++)
             {
-                printf("%02X ", (IOmap[idx]) & 0xFF);
-            }
-            printf("  ----  \r\n");
-            NLcount++;
-
-            console("---- driver infomation ----");
-            NLcount++;
-            printf("pose(output, input):\t %10d %10d, speed(max, tmp): %d, %d ---- \r\n", optr->Position, iptr->Position, max_speed, temp_speed);
-            NLcount++;
-            //printf("DIO(output, input): \t 0x%X 0x%X\r\n", optr->DigitalOutputs, iptr->DigitalInputs);
-            printf("(CtrlWord, StatWord)):\t");
-            printf("|%5d = " ,optr->CtrlWord);
-            printBinary(optr->CtrlWord);
-            printf("|%5d = " ,iptr->StatWord);
-            printBinary(iptr->StatWord);
-            printf(" ----\r\n");
-            NLcount++;
+                print_driver_io_ptr(iptr_ipd[idx], optr_ipd[idx]);
+            }         
 
             fflush(stdout);
-            MOVEUP(NLcount);
-
-            //printf("accPosition %d", iptr->Position);
-            // for (int idx = 0; idx < (int)ec_slave[R2_EC0902].Obytes; idx++)
-            // {
-            //     printf("%02X ", ec_slave[R2_EC0902].outputs[idx]);
-            // }    
+            MOVEUP(17);
         }
         EXEC_INTERVAL_END
     }
     
-    MOVEDOWN(display_move);
-
+    MOVEDOWN(17);
 }
 
 void print_ec_group(ec_groupt group)
@@ -777,12 +782,11 @@ void simpletest(char *ifname)
                 console("[slave:%d] name: %s", slave_id, ec_slave[slave_id].name);
             }
 
-            memset(DO, 0, sizeof(DO));
-
             console("---- slave config ----");
             
-            ec_slave[R2_EC0902].PO2SOconfig = setupDeltaIO;
-            ec_slave[ZeroErr_Driver_1].PO2SOconfig = setupZeroErrDriver;
+            ec_slave[IPD_1].PO2SOconfig = setupIPDDriver;
+            ec_slave[IPD_2].PO2SOconfig = setupIPDDriver;
+            ec_slave[IPD_3].PO2SOconfig = setupIPDDriver;
             usedmem = ec_config_map(&IOmap);
             console("IOmap address %p used memsize %d", IOmap, usedmem);
             console("Slaves mapped state to SAFE_OP.");
@@ -1000,17 +1004,17 @@ OSAL_THREAD_FUNC keyboard(void *ptr)
 
         if (isdigit(ch))
         {
-            int idx = ch - '0';
+            //int idx = ch - '0';
             //DO[idx] = !DO[idx];
-            CtrlWord[idx] = !CtrlWord[idx];
+            //CtrlWord[idx] = !CtrlWord[idx];
+
         }
 
         switch (ch)
         {
         case ' ':
-            dynamicY = !dynamicY;
             break;
-        case 'i':
+        case 'r':
             max_dt = LLONG_MIN;
             min_dt = LLONG_MAX;
             sum_dt = 0;
@@ -1020,62 +1024,6 @@ OSAL_THREAD_FUNC keyboard(void *ptr)
             printf("\r\n");
             bg_cancel = 1;
             break;
-
-        // case 'a':
-        //     sdo_write8(ZeroErr_Driver_1, 0x4602, 0, 0x0);
-        //     break;
-        // case 'd':
-        //     sdo_write8(ZeroErr_Driver_1, 0x4602, 0, 0x1);
-        //     break;
-
-        // 設定位置
-        case 'w':
-            driver_mode = Mode_Position;
-            pos_target += max_speed;
-            break;
-        case 's':
-            driver_mode = Mode_Position;
-            pos_target = pos_feedback;
-            break;
-        case 'x':
-            driver_mode = Mode_Position;
-            pos_target -= max_speed;
-            break;
-
-        // 設定速度
-        case 'e':
-            max_speed += 10;
-            break;
-        case 'd':
-            max_speed = 10;
-            break;
-        case 'c':
-            max_speed -= 10;
-            if(max_speed < 1)
-                max_speed = 1;
-            break;
-
-        // 持續旋轉
-        case 'r':
-            driver_mode = Mode_Velocity;
-            direct = 1;
-            break;
-        case 'f':
-            driver_mode = Mode_Velocity;
-            direct = 0;
-            break;
-        case 'v':
-            driver_mode = Mode_Velocity;
-            direct = -1;
-            break;
-
-        // servo
-        case 'o':
-        request_servo_on = TRUE;
-        break;
-        case 'p':
-        request_servo_off = TRUE;
-        break;
 
         default:
             break;
