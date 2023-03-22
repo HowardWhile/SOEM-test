@@ -182,6 +182,16 @@ char *clock_now()
 
 #define MOVEUP(x) printf("\033[%dA", (x))
 #define MOVEDOWN(x) printf("\033[%dB", (x))
+
+#define SPACEAREA(x)                                                               \
+    {                                                                              \
+        for (int line_idx = 0; line_idx < x; line_idx++)                                  \
+        {                                                                          \
+            printf("                                                       \r\n"); \
+        }                                                                          \
+        MOVEUP(x);                                                                 \
+    }
+
 // printf( GREEN "Here is some text\n" RESET );
 #endif // ENABLE_ARC_CONSOLE
 

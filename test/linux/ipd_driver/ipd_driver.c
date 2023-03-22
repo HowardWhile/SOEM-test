@@ -49,7 +49,13 @@ boolean bg_cancel = 0;
 OSAL_THREAD_HANDLE bg_ecatcheck;
 OSAL_THREAD_HANDLE bg_keyboard;
 
-boolean dynamicY = FALSE;
+//-----------------------------------
+char console_buffer[1024];
+int console_buffer_len = 0;
+boolean request_adrs_cmd = FALSE;
+uint16_t request_adrs_address = 0;
+int32_t request_adrs_para = 0;
+//-----------------------------------
 
 int usedmem;
 char IOmap[4096];
@@ -59,15 +65,12 @@ boolean needlf;
 volatile int wkc;
 boolean inOP;
 uint8 currentgroup = 0;
-
-
-int display_move = 5;   
+//-----------------------------------
 int64 last_cktime = 0;
 int64 max_dt = LLONG_MIN;
 int64 min_dt = LLONG_MAX;
 int64 sum_dt = 0;
 int64 cyc_count = 0;
-
 //-----------------------------------
 // Driver_Outputs
 // 0x1600      "Output mapping 0"                            [RECORD  maxsub(0x19 / 25)]
@@ -132,36 +135,36 @@ int64 cyc_count = 0;
 //     0x0b      "Axis4AdrsCmd"                                [UNSIGNED16       RWRWRW]      0x0000 / 0
 //     0x0c      "Axis4ParCmd"                                 [INTEGER32        RWRWRW]      0x00000000 / 0
 
-typedef struct 
+typedef struct
 {
-    int32_t  Axis1PosCmd;
-    int16_t  Axis1VelCmd;
-    int16_t  Axis1CurCmd;
+    int32_t Axis1PosCmd;
+    int16_t Axis1VelCmd;
+    int16_t Axis1CurCmd;
     uint16_t Axis1CtlCmd;
     uint16_t Axis1AdrsCmd;
-    int32_t  Axis1ParCmd;
+    int32_t Axis1ParCmd;
 
-    int32_t  Axis2PosCmd;
-    int16_t  Axis2VelCmd;
-    int16_t  Axis2CurCmd;
+    int32_t Axis2PosCmd;
+    int16_t Axis2VelCmd;
+    int16_t Axis2CurCmd;
     uint16_t Axis2CtlCmd;
     uint16_t Axis2AdrsCmd;
-    int32_t  Axis2ParCmd;
+    int32_t Axis2ParCmd;
 
-    int32_t  Axis3PosCmd;
-    int16_t  Axis3VelCmd;
-    int16_t  Axis3CurCmd;
+    int32_t Axis3PosCmd;
+    int16_t Axis3VelCmd;
+    int16_t Axis3CurCmd;
     uint16_t Axis3CtlCmd;
     uint16_t Axis3AdrsCmd;
-    int32_t  Axis3ParCmd;
+    int32_t Axis3ParCmd;
 
-    int32_t  Axis4PosCmd;
-    int16_t  Axis4VelCmd;
-    int16_t  Axis4CurCmd;
+    int32_t Axis4PosCmd;
+    int16_t Axis4VelCmd;
+    int16_t Axis4CurCmd;
     uint16_t Axis4CtlCmd;
     uint16_t Axis4AdrsCmd;
-    int32_t  Axis4ParCmd;
-}Driver_Outputs;
+    int32_t Axis4ParCmd;
+} Driver_Outputs;
 
 //-----------------------------------
 // Driver_Inputs
@@ -228,38 +231,38 @@ typedef struct
 //     0x0b      "Axis4AdrsFbk"                                [UNSIGNED16       R_R_R_]      0x0000 / 0
 //     0x0c      "Axis4ParFbk"                                 [INTEGER32        R_R_R_]      0x00000000 / 0
 
-typedef struct 
+typedef struct
 {
-    int32_t  GPIO_INPUTS;
+    int32_t GPIO_INPUTS;
 
-    int32_t  Axis1PosFbk;
-    int16_t  Axis1VelFbk;
-    int16_t  Axis1CurFbk;
+    int32_t Axis1PosFbk;
+    int16_t Axis1VelFbk;
+    int16_t Axis1CurFbk;
     uint16_t Axis1CtlFbk;
     uint16_t Axis1AdrsFbk;
-    int32_t  Axis1ParFbk;
+    int32_t Axis1ParFbk;
 
-    int32_t  Axis2PosFbk;
-    int16_t  Axis2VelFbk;
-    int16_t  Axis2CurFbk;
+    int32_t Axis2PosFbk;
+    int16_t Axis2VelFbk;
+    int16_t Axis2CurFbk;
     uint16_t Axis2CtlFbk;
     uint16_t Axis2AdrsFbk;
-    int32_t  Axis2ParFbk;
+    int32_t Axis2ParFbk;
 
-    int32_t  Axis3PosFbk;
-    int16_t  Axis3VelFbk;
-    int16_t  Axis3CurFbk;
+    int32_t Axis3PosFbk;
+    int16_t Axis3VelFbk;
+    int16_t Axis3CurFbk;
     uint16_t Axis3CtlFbk;
     uint16_t Axis3AdrsFbk;
-    int32_t  Axis3ParFbk;
+    int32_t Axis3ParFbk;
 
-    int32_t  Axis4PosFbk;
-    int16_t  Axis4VelFbk;
-    int16_t  Axis4CurFbk;
+    int32_t Axis4PosFbk;
+    int16_t Axis4VelFbk;
+    int16_t Axis4CurFbk;
     uint16_t Axis4CtlFbk;
     uint16_t Axis4AdrsFbk;
-    int32_t  Axis4ParFbk;
-}Driver_Inputs;
+    int32_t Axis4ParFbk;
+} Driver_Inputs;
 
 //-----------------------------------
 void print_driver_io(
@@ -270,53 +273,52 @@ void print_driver_io(
     uint16_t adr_cmd, uint16_t adr_fbk,
     int32_t par_cmd, int32_t par_fbk)
 {
-    //console(" Pos Cmd: %d\tPos Fbk: %d", pos_cmd, pos_fbk);
-    //console(" Vel Cmd: %d\tVel Fbk: %d", vel_cmd, vel_fbk);
-    console(" Cur Cmd: %d\tCur Fbk: %d", cur_cmd, cur_fbk);
-    //console(" Ctl Cmd: %d\tCtl Fbk: %d", ctl_cmd, ctl_fbk);
-    console(" Adr Cmd: %d\tAdr Fbk: %d", adr_cmd, adr_fbk);
-    console(" Par Cmd: %d\tPar Fbk: %d", par_cmd, par_fbk);
+    // printf(" Pos: %8d\tFbk: %8d\r\n", pos_cmd, pos_fbk);
+    // printf(" Vel: %8d\tFbk: %8d\r\n", vel_cmd, vel_fbk);
+    printf(" Cur: %8d\tFbk: %8d\r\n", cur_cmd, cur_fbk);
+    // printf(" Ctl: %8d\tFbk: %8d\r\n", ctl_cmd, ctl_fbk);
+    printf(" Adr: %8d\tFbk: %8d\r\n", adr_cmd, adr_fbk);
+    printf(" Par: %8d\tFbk: %8d\r\n", par_cmd, par_fbk);
 
     return;
 }
-void print_driver_io_ptr(Driver_Inputs* in, Driver_Outputs* out)
+void print_driver_io_ptr(Driver_Inputs *in, Driver_Outputs *out)
 {
-    console(" Axis1");
+    printf(" Axis1\r\n");
     print_driver_io(
-        out->Axis1PosCmd,  in->Axis1PosFbk,
-        out->Axis1VelCmd,  in->Axis1VelFbk,
-        out->Axis1CurCmd,  in->Axis1CurFbk,
-        out->Axis1CtlCmd,  in->Axis1CtlFbk,
+        out->Axis1PosCmd, in->Axis1PosFbk,
+        out->Axis1VelCmd, in->Axis1VelFbk,
+        out->Axis1CurCmd, in->Axis1CurFbk,
+        out->Axis1CtlCmd, in->Axis1CtlFbk,
         out->Axis1AdrsCmd, in->Axis1AdrsFbk,
-        out->Axis1ParCmd,  in->Axis1ParFbk );    
+        out->Axis1ParCmd, in->Axis1ParFbk);
 
-    console(" Axis2");
+    printf(" Axis2\r\n");
     print_driver_io(
-        out->Axis2PosCmd,  in->Axis2PosFbk,
-        out->Axis2VelCmd,  in->Axis2VelFbk,
-        out->Axis2CurCmd,  in->Axis2CurFbk,
-        out->Axis2CtlCmd,  in->Axis2CtlFbk,
+        out->Axis2PosCmd, in->Axis2PosFbk,
+        out->Axis2VelCmd, in->Axis2VelFbk,
+        out->Axis2CurCmd, in->Axis2CurFbk,
+        out->Axis2CtlCmd, in->Axis2CtlFbk,
         out->Axis2AdrsCmd, in->Axis2AdrsFbk,
-        out->Axis2ParCmd,  in->Axis2ParFbk );  
+        out->Axis2ParCmd, in->Axis2ParFbk);
 
-    console(" Axis3");
+    printf(" Axis3\r\n");
     print_driver_io(
-        out->Axis3PosCmd,  in->Axis3PosFbk,
-        out->Axis3VelCmd,  in->Axis3VelFbk,
-        out->Axis3CurCmd,  in->Axis3CurFbk,
-        out->Axis3CtlCmd,  in->Axis3CtlFbk,
+        out->Axis3PosCmd, in->Axis3PosFbk,
+        out->Axis3VelCmd, in->Axis3VelFbk,
+        out->Axis3CurCmd, in->Axis3CurFbk,
+        out->Axis3CtlCmd, in->Axis3CtlFbk,
         out->Axis3AdrsCmd, in->Axis3AdrsFbk,
-        out->Axis3ParCmd,  in->Axis3ParFbk );  
+        out->Axis3ParCmd, in->Axis3ParFbk);
 
-    console(" Axis4");
-     print_driver_io(
-        out->Axis4PosCmd,  in->Axis4PosFbk,
-        out->Axis4VelCmd,  in->Axis4VelFbk,
-        out->Axis4CurCmd,  in->Axis4CurFbk,
-        out->Axis4CtlCmd,  in->Axis4CtlFbk,
+    printf(" Axis4\r\n");
+    print_driver_io(
+        out->Axis4PosCmd, in->Axis4PosFbk,
+        out->Axis4VelCmd, in->Axis4VelFbk,
+        out->Axis4CurCmd, in->Axis4CurFbk,
+        out->Axis4CtlCmd, in->Axis4CtlFbk,
         out->Axis4AdrsCmd, in->Axis4AdrsFbk,
-        out->Axis4ParCmd,  in->Axis4ParFbk );         
-
+        out->Axis4ParCmd, in->Axis4ParFbk);
 }
 
 // static int sdo_write8(uint16 slave, uint16 index, uint8 subindex, uint8 value)
@@ -409,20 +411,19 @@ int setupIPDDriver(uint16 slave)
     console("[slave:%d] IPD Driver setup", slave);
 
     uint16 map_RxPDOassign[] = {0x0001, 0x1600}; // 0x1c12
-    wkc += ec_SDOwrite(slave, 0x1c12, 0x00, TRUE, sizeof(map_RxPDOassign), &map_RxPDOassign, EC_TIMEOUTSAFE );
+    wkc += ec_SDOwrite(slave, 0x1c12, 0x00, TRUE, sizeof(map_RxPDOassign), &map_RxPDOassign, EC_TIMEOUTSAFE);
 
     uint16 map_TxPDOassign[] = {0x0001, 0x1A00}; // 0x1c13
-    wkc += ec_SDOwrite(slave, 0x1c13, 0x00, TRUE, sizeof(map_TxPDOassign), &map_TxPDOassign, EC_TIMEOUTSAFE );
-
+    wkc += ec_SDOwrite(slave, 0x1c13, 0x00, TRUE, sizeof(map_TxPDOassign), &map_TxPDOassign, EC_TIMEOUTSAFE);
 
     if (wkc != check_wkc)
     {
-        console("[slave:%d] IPD Driver setup "RED"failed."RESET" wkc: %d", slave, wkc);
+        console("[slave:%d] IPD Driver setup " RED "failed." RESET " wkc: %d", slave, wkc);
         return -1;
     }
     else
     {
-        console("[slave:%d] IPD Driver setup "LIGHT_GREEN"succeed."RESET, slave);
+        console("[slave:%d] IPD Driver setup " LIGHT_GREEN "succeed." RESET, slave);
         return 0;
     }
 }
@@ -596,14 +597,14 @@ void cyclic_task()
         // IPD pdo point mapping
         // -------------------------------------
         Driver_Inputs *iptr_ipd[3];
-        iptr_ipd[0] = (Driver_Inputs*)ec_slave[IPD_1].inputs;
-        iptr_ipd[1] = (Driver_Inputs*)ec_slave[IPD_2].inputs;
-        iptr_ipd[2] = (Driver_Inputs*)ec_slave[IPD_3].inputs;
+        iptr_ipd[0] = (Driver_Inputs *)ec_slave[IPD_1].inputs;
+        iptr_ipd[1] = (Driver_Inputs *)ec_slave[IPD_2].inputs;
+        iptr_ipd[2] = (Driver_Inputs *)ec_slave[IPD_3].inputs;
 
         Driver_Outputs *optr_ipd[3];
-        optr_ipd[0] = (Driver_Outputs*)ec_slave[IPD_1].outputs;
-        optr_ipd[1] = (Driver_Outputs*)ec_slave[IPD_2].outputs;
-        optr_ipd[2] = (Driver_Outputs*)ec_slave[IPD_3].outputs;
+        optr_ipd[0] = (Driver_Outputs *)ec_slave[IPD_1].outputs;
+        optr_ipd[1] = (Driver_Outputs *)ec_slave[IPD_2].outputs;
+        optr_ipd[2] = (Driver_Outputs *)ec_slave[IPD_3].outputs;
 
         // -------------------------------------
         // renew inputs
@@ -611,19 +612,36 @@ void cyclic_task()
 
         // -------------------------------------
         // logic
-        // -------------------------------------      
+        // -------------------------------------
+        if(request_adrs_cmd)
+        {
+            request_adrs_cmd = FALSE;
+            for (int idx = 0; idx < ec_slavecount; idx++)
+            {
+                optr_ipd[idx]->Axis1AdrsCmd = request_adrs_address;
+                optr_ipd[idx]->Axis2AdrsCmd = request_adrs_address;
+                optr_ipd[idx]->Axis3AdrsCmd = request_adrs_address;
+                optr_ipd[idx]->Axis4AdrsCmd = request_adrs_address;
+
+                optr_ipd[idx]->Axis1ParCmd = request_adrs_para;
+                optr_ipd[idx]->Axis2ParCmd = request_adrs_para;
+                optr_ipd[idx]->Axis3ParCmd = request_adrs_para;
+                optr_ipd[idx]->Axis4ParCmd = request_adrs_para;                
+            }
+
+        }
 
         // -------------------------------------
         // update outputs
         // ------------------------------------
 
         // ------------------------------------
-        // send ethercat cmd 
+        // send ethercat cmd
         // ------------------------------------
         ec_send_processdata();
 
         // ------------------------------------
-        // latency 
+        // latency
         // ------------------------------------
         cyc_count++;
         sum_dt += dt;
@@ -637,119 +655,32 @@ void cyclic_task()
         // ------------------------------------
         // 顯示
         // ------------------------------------
-        EXEC_INTERVAL(100)        
+        EXEC_INTERVAL(100)
         {
-            for (size_t i = 0; i < 17; i++)
-            {
-                console("                                                       ");
-            }
-            MOVEUP(17);
-            
+            SPACEAREA(18)
 
             console("cyc_count: %ld, Latency:(min, max, avg)us = (%ld, %ld, %.2f) T:%ld+(%3ld)ns ****",
                     cyc_count,
-                    min_dt / 1000, max_dt / 1000, (double)sum_dt / cyc_count / 1000,
+                    min_dt / 1000,
+                    max_dt / 1000,
+                    (double)sum_dt / cyc_count / 1000,
                     ec_DCtime, toff);
 
             for (size_t idx = 0; idx < 1; idx++)
             {
                 print_driver_io_ptr(iptr_ipd[idx], optr_ipd[idx]);
-            }         
+            }
 
+            console("console: %s", console_buffer);
             fflush(stdout);
-            MOVEUP(17);
+            MOVEUP(18);
         }
         EXEC_INTERVAL_END
     }
-    
+
     MOVEDOWN(17);
 }
 
-void print_ec_group(ec_groupt group)
-{
-    printf(" ---- print_ec_group: ---- \r\n");
-    printf("logstartaddr: %" PRIu32 "\n", group.logstartaddr);
-    printf("Obytes: %" PRIu32 "\n", group.Obytes);
-    printf("outputs: %p\n", (void *)group.outputs);
-    printf("Ibytes: %" PRIu32 "\n", group.Ibytes);
-    printf("inputs: %p\n", (void *)group.inputs);
-    printf("hasdc: %d\n", group.hasdc);
-    printf("DCnext: %" PRIu16 "\n", group.DCnext);
-    printf("Ebuscurrent: %" PRId16 "\n", group.Ebuscurrent);
-    printf("blockLRW: %" PRIu8 "\n", group.blockLRW);
-    printf("nsegments: %" PRIu16 "\n", group.nsegments);
-    printf("Isegment: %" PRIu16 "\n", group.Isegment);
-    printf("Ioffset: %" PRIu16 "\n", group.Ioffset);
-    printf("outputsWKC: %" PRIu16 "\n", group.outputsWKC);
-    printf("inputsWKC: %" PRIu16 "\n", group.inputsWKC);
-    printf("docheckstate: %d\n", group.docheckstate);
-    printf("IOsegment: ");
-    for (int i = 0; i < EC_MAXIOSEGMENTS; i++)
-    {
-        printf("%" PRIu32 " ", group.IOsegment[i]);
-    }
-    printf("\n");
-}
-void print_ec_slave(struct ec_slave slave)
-{
-    printf(" ---- print_ec_slave: [%s] ---- \r\n", slave.name);
-    printf("state: %u\n", slave.state);
-    printf("ALstatuscode: %u\n", slave.ALstatuscode);
-    printf("configadr: %u\n", slave.configadr);
-    printf("aliasadr: %u\n", slave.aliasadr);
-    printf("eep_man: %u\n", slave.eep_man);
-    printf("eep_id: %u\n", slave.eep_id);
-    printf("eep_rev: %u\n", slave.eep_rev);
-    printf("Itype: %u\n", slave.Itype);
-    printf("Dtype: %u\n", slave.Dtype);
-    printf("Obits: %u\n", slave.Obits);
-    printf("Obytes: %u\n", slave.Obytes);
-    printf("Ostartbit: %u\n", slave.Ostartbit);
-    printf("Ibits: %u\n", slave.Ibits);
-    printf("Ibytes: %u\n", slave.Ibytes);
-    printf("Istartbit: %u\n", slave.Istartbit);
-    printf("mbx_l: %u\n", slave.mbx_l);
-    printf("mbx_wo: %u\n", slave.mbx_wo);
-    printf("mbx_rl: %u\n", slave.mbx_rl);
-    printf("mbx_ro: %u\n", slave.mbx_ro);
-    printf("mbx_proto: %u\n", slave.mbx_proto);
-    printf("mbx_cnt: %u\n", slave.mbx_cnt);
-    printf("hasdc: %d\n", slave.hasdc);
-    printf("ptype: %u\n", slave.ptype);
-    printf("topology: %u\n", slave.topology);
-    printf("activeports: %u\n", slave.activeports);
-    printf("consumedports: %u\n", slave.consumedports);
-    printf("parent: %u\n", slave.parent);
-    printf("parentport: %u\n", slave.parentport);
-    printf("entryport: %u\n", slave.entryport);
-    printf("DCrtA: %d\n", slave.DCrtA);
-    printf("DCrtB: %d\n", slave.DCrtB);
-    printf("DCrtC: %d\n", slave.DCrtC);
-    printf("DCrtD: %d\n", slave.DCrtD);
-    printf("pdelay: %d\n", slave.pdelay);
-    printf("DCnext: %u\n", slave.DCnext);
-    printf("DCprevious: %u\n", slave.DCprevious);
-    printf("DCcycle: %d\n", slave.DCcycle);
-    printf("DCshift: %d\n", slave.DCshift);
-    printf("DCactive: %u\n", slave.DCactive);
-    printf("configindex: %u\n", slave.configindex);
-    printf("SIIindex: %u\n", slave.SIIindex);
-    printf("eep_8byte: %u\n", slave.eep_8byte);
-    printf("eep_pdi: %u\n", slave.eep_pdi);
-    printf("CoEdetails: %u\n", slave.CoEdetails);
-    printf("FoEdetails: %u\n", slave.FoEdetails);
-    printf("EoEdetails: %u\n", slave.EoEdetails);
-    printf("SoEdetails: %u\n", slave.SoEdetails);
-    printf("CoE details: %d\n", slave.CoEdetails);
-    printf("FoE details: %d\n", slave.FoEdetails);
-    printf("EoE details: %d\n", slave.EoEdetails);
-    printf("SoE details: %d\n", slave.SoEdetails);
-    printf("E-bus current: %d\n", slave.Ebuscurrent);
-    printf("Block LRW: %d\n", slave.blockLRW);
-    printf("Group: %d\n", slave.group);
-    printf("First unused FMMU: %d\n", slave.FMMUunused);
-    printf("Is lost: %d\n", slave.islost);
-}
 void simpletest(char *ifname)
 {
     int i;
@@ -783,15 +714,13 @@ void simpletest(char *ifname)
             }
 
             console("---- slave config ----");
-            
+
             ec_slave[IPD_1].PO2SOconfig = setupIPDDriver;
             ec_slave[IPD_2].PO2SOconfig = setupIPDDriver;
             ec_slave[IPD_3].PO2SOconfig = setupIPDDriver;
             usedmem = ec_config_map(&IOmap);
             console("IOmap address %p used memsize %d", IOmap, usedmem);
             console("Slaves mapped state to SAFE_OP.");
-
-
 
             ec_configdc();
             // for (int slave_id = 1; slave_id <= ec_slavecount; slave_id++)
@@ -817,11 +746,11 @@ void simpletest(char *ifname)
                         (int)ec_slave[cnt].pdelay,
                         ec_slave[cnt].hasdc);
 
-                //print_ec_slave(ec_slave[cnt]);
+                // print_ec_slave(ec_slave[cnt]);
             }
-            //print_ec_group(ec_group[0]);
+            // print_ec_group(ec_group[0]);
             expectedWKC = (ec_group[0].outputsWKC * 2) + ec_group[0].inputsWKC;
-            console("Calculated workcounter %d", expectedWKC);    
+            console("Calculated workcounter %d", expectedWKC);
 
             console("Request operational state for all slaves");
             ec_slave[0].state = EC_STATE_OPERATIONAL;
@@ -837,7 +766,7 @@ void simpletest(char *ifname)
 
             /* wait for all slaves to reach OP state */
             console("wait for all slaves to reach OP state");
-            
+
             ck_time = clock_ms();
             while (!bg_cancel && (ec_statecheck(0, EC_STATE_OPERATIONAL, EC_TIMEOUTRET) != EC_STATE_OPERATIONAL))
             {
@@ -974,6 +903,31 @@ OSAL_THREAD_FUNC ecatcheck(void *ptr)
     printf("exit ecatcheck\r\r\n");
 }
 
+int is_integer(char *str)
+{
+    int i;
+    for (i = 0; str[i] != '\0'; i++)
+    {
+        if (!isdigit(str[i]))
+        {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+int split(char *str, char **tokens, int max_tokens)
+{
+    int count = 0;
+    char *token = strtok(str, ",");
+    while (token != NULL && count < max_tokens)
+    {
+        tokens[count++] = token;
+        token = strtok(NULL, ",");
+    }
+    return count;
+}
+
 OSAL_THREAD_FUNC keyboard(void *ptr)
 {
     console("[Thread] keyboard start");
@@ -1002,12 +956,12 @@ OSAL_THREAD_FUNC keyboard(void *ptr)
         ch = getchar();
         tcsetattr(0, TCSANOW, &stored_settings);
 
-        if (isdigit(ch))
+        if (isdigit(ch) || ispunct(ch))
         {
-            //int idx = ch - '0';
-            //DO[idx] = !DO[idx];
-            //CtrlWord[idx] = !CtrlWord[idx];
-
+            console_buffer[console_buffer_len++] = ch;
+            // int idx = ch - '0';
+            // DO[idx] = !DO[idx];
+            // CtrlWord[idx] = !CtrlWord[idx];
         }
 
         switch (ch)
@@ -1024,13 +978,44 @@ OSAL_THREAD_FUNC keyboard(void *ptr)
             printf("\r\n");
             bg_cancel = 1;
             break;
+        case '\n':
+        {
+            const int max_token = 10;
+            char* oStrings[max_token];
+            int num = split(console_buffer, oStrings, max_token);
+
+            // for (int idx = 0; idx < num; idx++)
+            //     console("oStrings[%d] = %s", idx, oStrings[idx]);
+
+            if (num == 1 &&
+                is_integer(oStrings[0]))
+            {
+                request_adrs_cmd = TRUE;
+                request_adrs_address = atoi(oStrings[0]);
+            }
+
+            if (num == 2 &&
+                is_integer(oStrings[0]) &&
+                is_integer(oStrings[1]))
+            {
+                request_adrs_cmd = TRUE;
+                request_adrs_address = atoi(oStrings[0]);
+                request_adrs_para = atoi(oStrings[1]);
+            }
+
+            memset(console_buffer, 0, sizeof(console_buffer));
+            console_buffer_len = 0;
+
+        }
+
+            break;
 
         default:
             break;
         }
 
         // printf("[keyboard] press (%c) (%d)\r\r\n", ch, ch);
-        osal_usleep(10000); 
+        osal_usleep(10000);
     }
 
     return;
