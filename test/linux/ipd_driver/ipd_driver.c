@@ -32,7 +32,7 @@
 // -------------------------------------
 // 設備定義
 // -------------------------------------
-#define ETH_CH_NAME "eno1" // 通訊用的eth設備名稱
+#define ETH_CH_NAME "enp2s0" // 通訊用的eth設備名稱
 // Slave的站號
 #define IPD_1 1
 #define IPD_2 2
@@ -40,7 +40,7 @@
 // -------------------------------------
 // -------------------------------------
 
-#define CPU_ID 7 // 指定運行的CPU編號
+#define CPU_ID -1 // 指定運行的CPU編號
 
 // RT Loop的週期
 #define PERIOD_NS (1 * 1000 * 1000)
@@ -55,6 +55,7 @@ int console_buffer_len = 0;
 boolean request_adrs_cmd = FALSE;
 uint16_t request_adrs_address = 0;
 int32_t request_adrs_para = 0;
+boolean ipd_clear_bit = FALSE;
 //-----------------------------------
 
 int usedmem;
@@ -100,7 +101,10 @@ int64 cyc_count = 0;
 //     0x17      "SubIndex 023"                                [UNSIGNED32       R_R_R_]      0x70020a10 / 1879181840
 //     0x18      "SubIndex 024"                                [UNSIGNED32       R_R_R_]      0x70020b10 / 1879182096
 //     0x19      "SubIndex 025"                                [UNSIGNED32       R_R_R_]      0x70020c20 / 1879182368
-//
+
+// 0x7000      "GPIO_OUTPUTS"                                [VAR]
+//     0x00      "GPIO_OUTPUTS"                                [UNSIGNED32       RWRWRW]      0x00000000 / 0
+
 // 0x7001      "IPDCmdData1"                                 [RECORD  maxsub(0x0c / 12)]
 //     0x00      "SubIndex 000"                                [UNSIGNED8        R_R_R_]      0x0c / 12
 
@@ -137,6 +141,8 @@ int64 cyc_count = 0;
 
 typedef struct
 {
+    int32_t GPIO_OUTPUTS;
+
     int32_t Axis1PosCmd;
     int16_t Axis1VelCmd;
     int16_t Axis1CurCmd;
@@ -273,10 +279,10 @@ void print_driver_io(
     uint16_t adr_cmd, uint16_t adr_fbk,
     int32_t par_cmd, int32_t par_fbk)
 {
-    // printf(" Pos: %8d\tFbk: %8d\r\n", pos_cmd, pos_fbk);
-    // printf(" Vel: %8d\tFbk: %8d\r\n", vel_cmd, vel_fbk);
+    printf(" Pos: %8d\tFbk: %8d\r\n", pos_cmd, pos_fbk);
+    printf(" Vel: %8d\tFbk: %8d\r\n", vel_cmd, vel_fbk);
     printf(" Cur: %8d\tFbk: %8d\r\n", cur_cmd, cur_fbk);
-    // printf(" Ctl: %8d\tFbk: %8d\r\n", ctl_cmd, ctl_fbk);
+    printf(" Ctl: %8d\tFbk: %8d\r\n", ctl_cmd, ctl_fbk);
     printf(" Adr: %8d\tFbk: %8d\r\n", adr_cmd, adr_fbk);
     printf(" Par: %8d\tFbk: %8d\r\n", par_cmd, par_fbk);
 
@@ -284,6 +290,7 @@ void print_driver_io(
 }
 void print_driver_io_ptr(Driver_Inputs *in, Driver_Outputs *out)
 {
+    // \r = 4 + 6*4
     printf(" Axis1\r\n");
     print_driver_io(
         out->Axis1PosCmd, in->Axis1PosFbk,
@@ -407,14 +414,14 @@ int setNI(int Niceness)
 int setupIPDDriver(uint16 slave)
 {
     int wkc = 0;
-    const int check_wkc = 2;
+    const int check_wkc = 0;
     console("[slave:%d] IPD Driver setup", slave);
 
-    uint16 map_RxPDOassign[] = {0x0001, 0x1600}; // 0x1c12
-    wkc += ec_SDOwrite(slave, 0x1c12, 0x00, TRUE, sizeof(map_RxPDOassign), &map_RxPDOassign, EC_TIMEOUTSAFE);
+    // uint16 map_RxPDOassign[] = {0x0001, 0x1600}; // 0x1c12
+    // wkc += ec_SDOwrite(slave, 0x1c12, 0x00, TRUE, sizeof(map_RxPDOassign), &map_RxPDOassign, EC_TIMEOUTSAFE);
 
-    uint16 map_TxPDOassign[] = {0x0001, 0x1A00}; // 0x1c13
-    wkc += ec_SDOwrite(slave, 0x1c13, 0x00, TRUE, sizeof(map_TxPDOassign), &map_TxPDOassign, EC_TIMEOUTSAFE);
+    // uint16 map_TxPDOassign[] = {0x0001, 0x1A00}; // 0x1c13
+    // wkc += ec_SDOwrite(slave, 0x1c13, 0x00, TRUE, sizeof(map_TxPDOassign), &map_TxPDOassign, EC_TIMEOUTSAFE);
 
     if (wkc != check_wkc)
     {
@@ -572,8 +579,21 @@ void cyclic_task()
     while (!bg_cancel)
     {
         // sleep直到指定的時間點
+
+        // method 1
         add_timespec(&wakeup_time, cycletime + toff);
+
+        // method 2
+        //clock_gettime(CLOCK_MONOTONIC, &wakeup_time);
+        //add_timespec(&wakeup_time, cycletime);
+
+        // method 3
+        //add_timespec(&wakeup_time, cycletime);
+
+
+
         int ret = clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &wakeup_time, NULL);
+
         clock_gettime(CLOCK_MONOTONIC, &tnow);
         dt = calcdiff_ns(tnow, wakeup_time);
 
@@ -613,7 +633,7 @@ void cyclic_task()
         // -------------------------------------
         // logic
         // -------------------------------------
-        if(request_adrs_cmd)
+        // if(request_adrs_cmd)
         {
             request_adrs_cmd = FALSE;
             for (int idx = 0; idx < ec_slavecount; idx++)
@@ -626,9 +646,13 @@ void cyclic_task()
                 optr_ipd[idx]->Axis1ParCmd = request_adrs_para;
                 optr_ipd[idx]->Axis2ParCmd = request_adrs_para;
                 optr_ipd[idx]->Axis3ParCmd = request_adrs_para;
-                optr_ipd[idx]->Axis4ParCmd = request_adrs_para;                
-            }
+                optr_ipd[idx]->Axis4ParCmd = request_adrs_para;
 
+                modifyBit16(&optr_ipd[idx]->Axis1CtlCmd, 1, ipd_clear_bit);
+                modifyBit16(&optr_ipd[idx]->Axis2CtlCmd, 1, ipd_clear_bit);
+                modifyBit16(&optr_ipd[idx]->Axis3CtlCmd, 1, ipd_clear_bit);
+                modifyBit16(&optr_ipd[idx]->Axis4CtlCmd, 1, ipd_clear_bit);
+            }
         }
 
         // -------------------------------------
@@ -657,28 +681,54 @@ void cyclic_task()
         // ------------------------------------
         EXEC_INTERVAL(100)
         {
-            SPACEAREA(18)
+            SPACEAREA(30)
+
+            // char usdo[32];
+            // memset(&usdo, 0, 32);
+            // int l = sizeof(usdo) - 1;
+            // ec_SDOread(1, 0x7001, 4, FALSE, &l, &usdo, EC_TIMEOUTRXM);
+            // if (EcatError)
+            // {
+            //     console("EcatError!!");
+            // }
+            // else
+            // {
+            //     // uint8 *u8;
+            //     // int8 *i8;
+            //     uint16 *u16;
+            //     // int16 *i16;
+            //     // uint32 *u32;
+            //     // int32 *i32;
+            //     // uint64 *u64;
+            //     // int64 *i64;
+            //     // float *sr;
+            //     // double *dr;
+            //     // char es[32];
+            //     u16 = (uint16*) &usdo[0];
+            //     console("ec_SDOread = %d", *u16);
+            // }
 
             console("cyc_count: %ld, Latency:(min, max, avg)us = (%ld, %ld, %.2f) T:%ld+(%3ld)ns ****",
                     cyc_count,
                     min_dt / 1000,
                     max_dt / 1000,
                     (double)sum_dt / cyc_count / 1000,
-                    ec_DCtime, toff);
+                    ec_DCtime, toff); // 1
 
-            for (size_t idx = 0; idx < 1; idx++)
-            {
-                print_driver_io_ptr(iptr_ipd[idx], optr_ipd[idx]);
-            }
+            // for (int idx = 0; idx < 1; idx++)
+            // {
+            //     print_driver_io_ptr(iptr_ipd[idx], optr_ipd[idx]);
+            // }
+            print_driver_io_ptr(iptr_ipd[2], optr_ipd[2]);
 
             console("console: %s", console_buffer);
             fflush(stdout);
-            MOVEUP(18);
+            MOVEUP(30);
         }
         EXEC_INTERVAL_END
     }
 
-    MOVEDOWN(17);
+    MOVEDOWN(30);
 }
 
 void simpletest(char *ifname)
@@ -978,10 +1028,14 @@ OSAL_THREAD_FUNC keyboard(void *ptr)
             printf("\r\n");
             bg_cancel = 1;
             break;
+
+        case 'c':
+            ipd_clear_bit = !ipd_clear_bit;
+            break;
         case '\n':
         {
             const int max_token = 10;
-            char* oStrings[max_token];
+            char *oStrings[max_token];
             int num = split(console_buffer, oStrings, max_token);
 
             // for (int idx = 0; idx < num; idx++)
@@ -1005,10 +1059,9 @@ OSAL_THREAD_FUNC keyboard(void *ptr)
 
             memset(console_buffer, 0, sizeof(console_buffer));
             console_buffer_len = 0;
-
         }
 
-            break;
+        break;
 
         default:
             break;
