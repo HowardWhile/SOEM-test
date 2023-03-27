@@ -32,7 +32,7 @@
 // -------------------------------------
 // 設備定義
 // -------------------------------------
-#define ETH_CH_NAME "enp2s0" // 通訊用的eth設備名稱
+#define ETH_CH_NAME "eno1" // 通訊用的eth設備名稱
 // Slave的站號
 #define IPD_1 1
 #define IPD_2 2
@@ -40,7 +40,7 @@
 // -------------------------------------
 // -------------------------------------
 
-#define CPU_ID -1 // 指定運行的CPU編號
+#define CPU_ID 7 // 指定運行的CPU編號
 
 // RT Loop的週期
 #define PERIOD_NS (1 * 1000 * 1000)
@@ -328,6 +328,15 @@ void print_driver_io_ptr(Driver_Inputs *in, Driver_Outputs *out)
         out->Axis4ParCmd, in->Axis4ParFbk);
 }
 
+void print_ipd_interval(Driver_Inputs ** inputs)
+{
+    printf(" ipd_interval:");
+    for(int i= 0 ; i < ec_slavecount ; i++)
+    {
+        printf("%.2f ms ", (float)inputs[i]->Axis4ParFbk/1400.0 );
+    }    
+    printf("\r\n");
+}
 // static int sdo_write8(uint16 slave, uint16 index, uint8 subindex, uint8 value)
 // {
 //     return ec_SDOwrite(slave, index, subindex, FALSE, sizeof(uint8), &value, EC_TIMEOUTRXM);
@@ -679,10 +688,13 @@ void cyclic_task()
         // ------------------------------------
         // 顯示
         // ------------------------------------
-        EXEC_INTERVAL(100)
+        EXEC_INTERVAL(30)
         {
-            SPACEAREA(30)
-
+            EXEC_INTERVAL(1000)
+            {
+                SPACEAREA(31);
+            }
+            EXEC_INTERVAL_END
             // char usdo[32];
             // memset(&usdo, 0, 32);
             // int l = sizeof(usdo) - 1;
@@ -721,9 +733,12 @@ void cyclic_task()
             // }
             print_driver_io_ptr(iptr_ipd[2], optr_ipd[2]);
 
+            print_ipd_interval(iptr_ipd);
+
+
             console("console: %s", console_buffer);
             fflush(stdout);
-            MOVEUP(30);
+            MOVEUP(31);
         }
         EXEC_INTERVAL_END
     }
