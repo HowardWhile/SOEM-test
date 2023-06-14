@@ -6,6 +6,8 @@
 
 #include <stdio.h>
 #include <limits.h>
+#include <string.h>
+
 
 
 #define ENABLE_ARC_CONSOLE (1)
