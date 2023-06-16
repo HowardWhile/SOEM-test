@@ -72,7 +72,6 @@ void *bgRealtimeDoWork(void *arg)
         }
 
         int64_t dt;
-
         while (true)
         {
             // sleep直到指定的時間點
@@ -124,6 +123,19 @@ void handleCtrlC(int sig)
     receivedCtrlC = true;
 }
 
+void setupTerminal()
+{
+    termios stored_settings;
+    tcgetattr(0, &stored_settings); // 儲存目前的終端設定
+
+    termios new_settings = stored_settings; // 使用目前的終端設定作為新的設定
+    new_settings.c_lflag &= (~ICANON);      // 將 ICANON 標誌位設為 0，以屏蔽整行緩衝
+    new_settings.c_cc[VTIME] = 0;           // 將 VTIME 設置為 0，表示讀取時不等待特定時間
+    new_settings.c_cc[VMIN] = 1;            // 將 VMIN 設置為 1，表示至少需要讀取 1 個字符
+
+    tcsetattr(0, TCSANOW, &new_settings); // 設定新的終端屬性
+}
+
 void *bgKeyboardDoWork(void *arg)
 {
     console("bgKeyboardDoWork start, " LIGHT_GREEN "Thread ID: %d" RESET, getThreadID());
@@ -131,24 +143,14 @@ void *bgKeyboardDoWork(void *arg)
     // 攔截ctrl+c事件
     signal(SIGINT, handleCtrlC);
 
-    struct termios new_settings;
-    struct termios stored_settings;
-
-    tcgetattr(0, &stored_settings);
-    new_settings = stored_settings;
-    new_settings.c_lflag &= (~ICANON); // 屏蔽整行缓存
-    new_settings.c_cc[VTIME] = 0;
-
-    int tcgetattr(int fd, struct termios *termios_p);
-    tcgetattr(0, &stored_settings);
-    new_settings.c_cc[VMIN] = 1;
-
+    // 儲存目前的終端設定
+    termios stored_settings;
+    tcgetattr(0, &stored_settings); 
+    setupTerminal();        
     int ch;
     while (ch != 'q')
     {
-        tcsetattr(0, TCSANOW, &new_settings);
         ch = getchar();
-        tcsetattr(0, TCSANOW, &stored_settings);
 
         switch (ch)
         {
@@ -159,7 +161,7 @@ void *bgKeyboardDoWork(void *arg)
             cyc_count = 0;
             break;
         case 'q':
-            printf("\r\n");
+            MOVEDOWN(100); // 游標移到最後
             receivedCtrlC = 1;
             break;
 
@@ -171,6 +173,8 @@ void *bgKeyboardDoWork(void *arg)
             break;
     }
 
+    tcsetattr(0, TCSANOW, &stored_settings); // 還原設定
+    console("bgKeyboardDoWork thread exit");
     return NULL;
 }
 // ----------------------------------------------------------------
@@ -187,5 +191,6 @@ int main()
 
     // 等待執行緒結束
     pthread_join(bg_rt, NULL);
+    pthread_join(bg_keyboard, NULL);
     return 0;
 }
