@@ -16,7 +16,7 @@
 #include <stdio.h>
 
 /**
- * @brief set_latency_target
+ * @brief setLatencyTarget
  *
  * 消除系統時間偏移的函數
  * 取自cyclic_test
@@ -30,7 +30,7 @@
  *
  * @return 成功設定延遲目標時返回 0，否則返回 -1
  */
-static int set_latency_target(void)
+static int setLatencyTarget(void)
 {
     struct stat s;
     int ret;
@@ -58,7 +58,6 @@ static int set_latency_target(void)
     }
 
     console("# /dev/cpu_dma_latency set to %dus", latency_target_value);
-    close(latency_target_fd);
 
     return 0;
 }
@@ -136,7 +135,7 @@ int setThreadNiceness(int niceness)
  * @param t2 第二個 timespec 結構體
  * @return int64_t 兩個 timespec 結構體之間的時間差值（以納秒為單位）
  */
-static int64_t calcDiff_ns(struct timespec t1, struct timespec t2)
+static int64_t calcTimeDiffInNs(struct timespec t1, struct timespec t2)
 {
     int64_t tdiff;
     tdiff = NSEC_PER_SEC * (int64_t)((int)t1.tv_sec - (int)t2.tv_sec); // 計算秒數差值（乘以每秒的納秒數）
