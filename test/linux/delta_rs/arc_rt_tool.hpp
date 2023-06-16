@@ -39,14 +39,14 @@ static int setLatencyTarget(void)
 
     if (stat("/dev/cpu_dma_latency", &s) != 0)
     {
-        console("# /dev/cpu_dma_latency does not exist.");
+        console(RED "# /dev/cpu_dma_latency does not exist." RESET);
         return -1;
     }
 
     int latency_target_fd = open("/dev/cpu_dma_latency", O_RDWR);
     if (latency_target_fd == -1)
     {
-        console("# Failed to open /dev/cpu_dma_latency: %s", strerror(errno));
+        console("# Failed to open /dev/cpu_dma_latency:" RED "%s" RESET, strerror(errno));
         return -1;
     }
 
@@ -54,7 +54,7 @@ static int setLatencyTarget(void)
     ret = write(latency_target_fd, &latency_target_value, sizeof(latency_target_value));
     if (ret == 0)
     {
-        console("# error setting cpu_dma_latency to %d!: %s", latency_target_value, strerror(errno));
+        console("# error setting cpu_dma_latency to %d!:" RED "%s" RESET, latency_target_value, strerror(errno));
         close(latency_target_fd);
         return -1;
     }
@@ -184,6 +184,5 @@ static void addTimespec(struct timespec *ts, int64_t addtime)
         ts->tv_nsec = nsec;                                // 將剩餘的納秒數存回 tv_nsec
     }
 }
-
 
 #endif // rt_tool_h__
