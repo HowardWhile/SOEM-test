@@ -3,8 +3,6 @@
 #include <signal.h>
 #include <iostream>
 
-#include <sys/syscall.h> //get PID TID
-
 #include <termios.h> //keyboardPISOX中定义的标准接口
 
 #include "arc_console.hpp"
@@ -53,8 +51,7 @@ void displayRealTimeInfo()
 // ----------------------------------------------------------------
 void *bgRealtimeDoWork(void *arg)
 {
-    pid_t tid = syscall(SYS_gettid);
-    console("bgRealtimeDoWork start, " LIGHT_GREEN "Thread ID: %d" RESET, tid);
+    console("bgRealtimeDoWork start, " LIGHT_GREEN "Thread ID: %d" RESET, getThreadID());
 
     // config thread to realtime
     if (
@@ -65,10 +62,10 @@ void *bgRealtimeDoWork(void *arg)
     {
         console("Starting RT task with dt=%u ns", PERIOD_NS);
 
-        struct timespec wakeup_time,tnow;
+        struct timespec time_next_execution, time_now;
 
         //  當前的精準時間
-        if (clock_gettime(CLOCK_MONOTONIC, &wakeup_time) == -1) //
+        if (clock_gettime(CLOCK_MONOTONIC, &time_next_execution) == -1) //
         {
             console("clock_gettime " RED "%s" RESET, strerror(errno));
             return NULL;
@@ -79,8 +76,8 @@ void *bgRealtimeDoWork(void *arg)
         while (true)
         {
             // sleep直到指定的時間點
-            addTimespec(&wakeup_time, PERIOD_NS);
-            int ret = clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &wakeup_time, NULL);
+            addTimespec(&time_next_execution, PERIOD_NS);
+            int ret = clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &time_next_execution, NULL);
             if (ret)
             {
                 // sleep錯誤處理
@@ -89,13 +86,12 @@ void *bgRealtimeDoWork(void *arg)
             }
 
             // 取得當前的精準時間
-            clock_gettime(CLOCK_MONOTONIC, &tnow);
+            clock_gettime(CLOCK_MONOTONIC, &time_now);
 
             // 計算時間差距
-            int64_t dt = calcTimeDiffInNs(tnow, wakeup_time);
+            int64_t dt = calcTimeDiffInNs(time_now, time_next_execution);
             update_dt(dt);
 
-            
             EXEC_INTERVAL(30)
             {
                 // 每30ms顯示一次實時統計的訊息
@@ -109,7 +105,7 @@ void *bgRealtimeDoWork(void *arg)
     }
     else
     {
-        console("setThreadPriority or setThreadNiceness fail");        
+        console("setThreadPriority or setThreadNiceness fail");
     }
 
     console("bgRealtimeDoWork thread exit");
@@ -130,8 +126,7 @@ void handleCtrlC(int sig)
 
 void *bgKeyboardDoWork(void *arg)
 {
-    pid_t tid = syscall(SYS_gettid);
-    console("bgKeyboardDoWork start, " LIGHT_GREEN "Thread ID: %d" RESET, tid);
+    console("bgKeyboardDoWork start, " LIGHT_GREEN "Thread ID: %d" RESET, getThreadID());
 
     // 攔截ctrl+c事件
     signal(SIGINT, handleCtrlC);
@@ -183,31 +178,14 @@ void *bgKeyboardDoWork(void *arg)
 
 int main()
 {
-    console("delta_rs SOEM (Simple Open EtherCAT Master) Start...");
+    console("delta_rs SOEM (Simple Open EtherCAT Master) Start... " LIGHT_GREEN "Process ID: %d" RESET, getProcessID());
+    pthread_t bg_keyboard, bg_rt;
 
-    // 鍵盤
-    pthread_t bg_keyboard;
-    if (pthread_create(&bg_keyboard, NULL, bgKeyboardDoWork, NULL) != 0)
-    {
-        fprintf(stderr, "Failed to create bg_rt thread\n");
-        return -1;
-    }
-    usleep(100);
-
-    // 開始執行背景執行
-    pthread_t bg_rt;
-    if (pthread_create(&bg_rt, NULL, bgRealtimeDoWork, NULL) != 0)
-    {
-        fprintf(stderr, "Failed to create bg_rt thread\n");
-        return -1;
-    }
+    pthread_create(&bg_keyboard, NULL, bgKeyboardDoWork, NULL); // 鍵盤執行序
+    usleep(1000);
+    pthread_create(&bg_rt, NULL, bgRealtimeDoWork, NULL); // RT執行序
 
     // 等待執行緒結束
-    if (pthread_join(bg_rt, NULL) != 0)
-    {
-        fprintf(stderr, "Failed to join bg_rt thread\n");
-        return -1;
-    }
-
+    pthread_join(bg_rt, NULL);
     return 0;
 }

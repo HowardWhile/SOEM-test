@@ -15,6 +15,8 @@
 #include <sched.h>
 #include <stdio.h>
 
+#include <sys/syscall.h>
+
 /**
  * @brief setLatencyTarget
  *
@@ -60,6 +62,26 @@ static int setLatencyTarget(void)
     console("# /dev/cpu_dma_latency set to %dus", latency_target_value);
 
     return 0;
+}
+
+/**
+ * @brief 取得目前執行序的 Thread ID
+ *
+ * @return int 目前執行序的 Thread ID
+ */
+static inline int getThreadID()
+{
+    return syscall(SYS_gettid);
+}
+
+/**
+ * @brief 取得目前進程的 Process ID
+ *
+ * @return int 目前進程的 Process ID
+ */
+static inline int getProcessID()
+{
+    return getpid();
 }
 
 /**
@@ -117,9 +139,7 @@ static int setThreadPriority(int priority)
 int setThreadNiceness(int niceness)
 {
     int ret = 0;
-    pid_t pid = getpid(); // 獲取進程 PID
-
-    ret = setpriority(PRIO_PROCESS, pid, niceness);
+    ret = setpriority(PRIO_PROCESS, getThreadID(), niceness);
     if (ret != 0)
     {
         console(RED "setThreadNiceness = (%d) %s" RESET, niceness, strerror(errno));
@@ -149,7 +169,7 @@ static int64_t calcTimeDiffInNs(struct timespec t1, struct timespec t2)
  * @param ts 指向 timespec 結構體的指針
  * @param addtime 要添加的時間（以納秒為單位）
  */
-void addTimespec(struct timespec *ts, int64_t addtime)
+static void addTimespec(struct timespec *ts, int64_t addtime)
 {
     int64_t sec, nsec;
 
@@ -164,5 +184,6 @@ void addTimespec(struct timespec *ts, int64_t addtime)
         ts->tv_nsec = nsec;                                // 將剩餘的納秒數存回 tv_nsec
     }
 }
+
 
 #endif // rt_tool_h__
