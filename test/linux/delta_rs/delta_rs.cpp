@@ -5,16 +5,17 @@
 
 #include <termios.h> //keyboardPISOX中定义的标准接口
 
+#include "ethercat.h" // SOEM
+
 #include "arc_console.hpp"
 #include "arc_rt_tool.hpp"
 
 // ----------------------------------------------------------------
-// ----------------------------------------------------------------
+#define EC_CH_NAME "eno1"           // 通訊用的eth設備名稱
 #define CPU_ID 7                    // 指定運行的CPU編號
 #define PERIOD_NS (1 * 1000 * 1000) // 1ms rt任務週期
 // ----------------------------------------------------------------
-bool receivedCtrlC = false; // 控制台收到Crtl-C信号
-
+bool execExit = false; // 開始解建構程式
 // ----------------------------------------------------------------
 // realtime 性能計算與顯示
 // ----------------------------------------------------------------
@@ -62,44 +63,53 @@ void *bgRealtimeDoWork(void *arg)
     {
         console("Starting RT task with dt=%u ns", PERIOD_NS);
 
-        struct timespec time_next_execution, time_now;
-
-        //  當前的精準時間
-        if (clock_gettime(CLOCK_MONOTONIC, &time_next_execution) == -1) //
+        if (ec_init(EC_CH_NAME))
         {
-            console("clock_gettime " RED "%s" RESET, strerror(errno));
-            return NULL;
+            console("ec_init on [%s] " LIGHT_GREEN "succeeded." RESET, EC_CH_NAME);
+
+            struct timespec time_next_execution, time_now;
+
+            //  當前的精準時間
+            if (clock_gettime(CLOCK_MONOTONIC, &time_next_execution) == -1) //
+            {
+                console("clock_gettime " RED "%s" RESET, strerror(errno));
+                return NULL;
+            }
+
+            int64_t dt;
+            while (true)
+            {
+                // sleep直到指定的時間點
+                addTimespec(&time_next_execution, PERIOD_NS);
+                int ret = clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &time_next_execution, NULL);
+                if (ret)
+                {
+                    // sleep錯誤處理
+                    printf("clock_nanosleep(): %s\n", strerror(ret));
+                    // break;
+                }
+
+                // 取得當前的精準時間
+                clock_gettime(CLOCK_MONOTONIC, &time_now);
+
+                // 計算時間差距
+                int64_t dt = calcTimeDiffInNs(time_now, time_next_execution);
+                update_dt(dt);
+
+                EXEC_INTERVAL(30)
+                {
+                    // 每30ms顯示一次實時統計的訊息
+                    displayRealTimeInfo();
+                }
+                EXEC_INTERVAL_END
+
+                if (execExit)
+                    break;
+            }
         }
-
-        int64_t dt;
-        while (true)
+        else
         {
-            // sleep直到指定的時間點
-            addTimespec(&time_next_execution, PERIOD_NS);
-            int ret = clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &time_next_execution, NULL);
-            if (ret)
-            {
-                // sleep錯誤處理
-                printf("clock_nanosleep(): %s\n", strerror(ret));
-                // break;
-            }
-
-            // 取得當前的精準時間
-            clock_gettime(CLOCK_MONOTONIC, &time_now);
-
-            // 計算時間差距
-            int64_t dt = calcTimeDiffInNs(time_now, time_next_execution);
-            update_dt(dt);
-
-            EXEC_INTERVAL(30)
-            {
-                // 每30ms顯示一次實時統計的訊息
-                displayRealTimeInfo();
-            }
-            EXEC_INTERVAL_END
-
-            if (receivedCtrlC)
-                break;
+            console("ec_init on [%s] " RED "fail." RESET, EC_CH_NAME);
         }
     }
     else
@@ -108,6 +118,7 @@ void *bgRealtimeDoWork(void *arg)
     }
 
     console("bgRealtimeDoWork thread exit");
+    execExit = true;
     return NULL;
 }
 
@@ -117,23 +128,19 @@ void *bgRealtimeDoWork(void *arg)
 // Ctrl+C 訊號
 void handleCtrlC(int sig)
 {
-    console("Ctrl+C handle\n");
+    console("Ctrl+C handle");
     // 重新註冊信號處理函數，以繼續攔截 Ctrl+C 事件
     signal(SIGINT, handleCtrlC);
-    receivedCtrlC = true;
+    execExit = true;
 }
 
 void setupTerminal()
 {
-    termios stored_settings;
-    tcgetattr(0, &stored_settings); // 儲存目前的終端設定
-
-    termios new_settings = stored_settings; // 使用目前的終端設定作為新的設定
-    new_settings.c_lflag &= (~ICANON);      // 將 ICANON 標誌位設為 0，以屏蔽整行緩衝
-    new_settings.c_cc[VTIME] = 0;           // 將 VTIME 設置為 0，表示讀取時不等待特定時間
-    new_settings.c_cc[VMIN] = 1;            // 將 VMIN 設置為 1，表示至少需要讀取 1 個字符
-
-    tcsetattr(0, TCSANOW, &new_settings); // 設定新的終端屬性
+    termios new_settings;
+    tcgetattr(STDIN_FILENO, &new_settings);          // 儲存目前的終端設定
+    new_settings.c_lflag &= (~ICANON | ECHO);        // 將 ICANON 標誌位設為 0，以屏蔽整行緩衝
+    tcsetattr(STDIN_FILENO, TCSANOW, &new_settings); // 設定終端屬性
+    fcntl(STDIN_FILENO, F_SETFL, O_NONBLOCK);        // 將終端檔案描述符設置為非阻塞模式
 }
 
 void *bgKeyboardDoWork(void *arg)
@@ -145,12 +152,21 @@ void *bgKeyboardDoWork(void *arg)
 
     // 儲存目前的終端設定
     termios stored_settings;
-    tcgetattr(0, &stored_settings); 
-    setupTerminal();        
+    tcgetattr(0, &stored_settings);
+    setupTerminal();
     int ch;
     while (ch != 'q')
     {
+        if (execExit)
+            break;
+
         ch = getchar();
+        if (ch == EOF)
+        {
+            // 若 getchar() 返回 EOF，表示沒有輸入可用
+            usleep(1000); // 等待 1 毫秒
+            continue;
+        }
 
         switch (ch)
         {
@@ -162,15 +178,12 @@ void *bgKeyboardDoWork(void *arg)
             break;
         case 'q':
             MOVEDOWN(100); // 游標移到最後
-            receivedCtrlC = 1;
+            execExit = 1;
             break;
 
         default:
             break;
         }
-
-        if (receivedCtrlC)
-            break;
     }
 
     tcsetattr(0, TCSANOW, &stored_settings); // 還原設定
