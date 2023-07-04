@@ -51,6 +51,7 @@ void displayRealTimeInfo()
 // ethercat
 // ----------------------------------------------------------------
 char IOmap[4096];
+volatile int wkc = 0;
 
 int checkSlaveConfig(void)
 {
@@ -127,7 +128,6 @@ int checkOperational(void)
     {
         if (ec_statecheck(0, EC_STATE_OPERATIONAL, EC_TIMEOUTRET) == EC_STATE_OPERATIONAL)
         {
-            console(LIGHT_GREEN "Operational state reached for all slaves." RESET);
             break;
         }
 
@@ -143,6 +143,29 @@ int checkOperational(void)
         }
     }
     return 0;
+}
+
+/* get linux time synced to DC time */
+void ec_sync(int64 reftime, int64 cycletime, int64 *offsettime)
+{
+    // 原來是用PI控制器的概念來同步時間呀...
+    static int64 integral = 0;
+    int64 delta;
+    /* set linux sync point 50us later than DC sync, just as example */
+    delta = (reftime - 50000) % cycletime;
+    if (delta > (cycletime / 2))
+    {
+        delta = delta - cycletime;
+    }
+    if (delta > 0)
+    {
+        integral++;
+    }
+    if (delta < 0)
+    {
+        integral--;
+    }
+    *offsettime = -(delta / 100) - (integral / 20);
 }
 
 // ----------------------------------------------------------------
@@ -228,7 +251,9 @@ void *bgRealtimeDoWork(void *arg)
         setThreadPriority(99) == 0 &&     // 指定優先級PRI 99 = RT
         setThreadNiceness(-20) == 0)      // 指定優先級NI -20
     {
-        console("Starting RT task with dt=%u ns", PERIOD_NS);
+        const int cycletime = PERIOD_NS;
+
+        console("Starting RT task with dt=%u ns", cycletime);
 
         if (ec_init(EC_CH_NAME)) // 初始化 EtherCAT 主站
         {
@@ -238,53 +263,60 @@ void *bgRealtimeDoWork(void *arg)
             {
                 console("checkSlaveConfig..." LIGHT_GREEN "succeeded" RESET);
 
-                if (checkOperational() == 0)
+                if (checkOperational() == 0) 
                 {
+                    console(LIGHT_GREEN "Operational state reached for all slaves." RESET);
+
+                    struct timespec time_next_execution, time_now;                    
+                    if (clock_gettime(CLOCK_MONOTONIC, &time_next_execution) == -1) // 當前的精準時間
+                    {
+                        console("clock_gettime " RED "%s" RESET, strerror(errno));
+                        return NULL;
+                    }
+
+                    int64_t offset_time, dt;
+                    while (!execExit)
+                    {
+                        // sleep直到指定的時間點
+                        addTimespec(&time_next_execution, cycletime + offset_time);
+                        clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &time_next_execution, NULL);
+
+                        // ---------------------------------------------------
+                        // rx
+                        // ---------------------------------------------------
+                        wkc = ec_receive_processdata(EC_TIMEOUTRET);
+                        // ---------------------------------------------------
+                        // 取得當前的精準時間為了計算RT能力
+                        clock_gettime(CLOCK_MONOTONIC, &time_now); // rt benchmark
+                        if (ec_slave[0].hasdc)
+                        {
+                            // 計算offse_time以獲得讓Linux時間與同步DC時間
+                            ec_sync(ec_DCtime, cycletime, &offset_time);
+                        }
+
+                        // ---------------------------------------------------
+                        // tx
+                        // ---------------------------------------------------
+                        ec_send_processdata();
+                        // ---------------------------------------------------
+                        // rt benchmark
+                        // 計算用於測定rt能力的時間差距
+                        int64_t dt = calcTimeDiffInNs(time_now, time_next_execution);
+                        update_dt(dt);
+                        EXEC_INTERVAL(500)
+                        {
+                            // 每30ms顯示一次實時統計的訊息
+                            displayRealTimeInfo();
+                        }
+                        EXEC_INTERVAL_END
+                        // ---------------------------------------------------
+
+                        if (execExit)
+                            break;
+                    }
                 }
                 else
                 {
-                }
-
-                struct timespec time_next_execution, time_now;
-                //  當前的精準時間
-                if (clock_gettime(CLOCK_MONOTONIC, &time_next_execution) == -1) //
-                {
-                    console("clock_gettime " RED "%s" RESET, strerror(errno));
-                    return NULL;
-                }
-
-                int64_t dt;
-                while (!execExit)
-                {
-                    // sleep直到指定的時間點
-                    addTimespec(&time_next_execution, PERIOD_NS);
-                    int ret = clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &time_next_execution, NULL);
-                    if (ret)
-                    {
-                        // sleep錯誤處理
-                        printf("clock_nanosleep(): %s\n", strerror(ret));
-                        // break;
-                    }
-
-                    // 取得當前的精準時間
-                    clock_gettime(CLOCK_MONOTONIC, &time_now);
-
-                    // ec_send_processdata();
-                    // ec_receive_processdata(EC_TIMEOUTRET); // 執行收發一次
-
-                    // 計算時間差距
-                    int64_t dt = calcTimeDiffInNs(time_now, time_next_execution);
-                    update_dt(dt);
-
-                    EXEC_INTERVAL(30)
-                    {
-                        // 每30ms顯示一次實時統計的訊息
-                        displayRealTimeInfo();
-                    }
-                    EXEC_INTERVAL_END
-
-                    if (execExit)
-                        break;
                 }
             }
             else
@@ -292,8 +324,14 @@ void *bgRealtimeDoWork(void *arg)
                 console("checkSlaveConfig " RED "Failed." RESET);
             }
 
+            // 恢復成PRE_OP
+            console("[Request PRE_OP state for all slaves");
+            ec_slave[0].state = EC_STATE_PRE_OP;
+            ec_writestate(0);
+
+            // 停止 EtherCAT 通信並關閉連接。
             console("ec_close");
-            ec_close(); // 停止 EtherCAT 通信並關閉連接。
+            ec_close();
         }
         else
         {
