@@ -462,15 +462,16 @@ int main()
     console("delta_rs SOEM (Simple Open EtherCAT Master) Start... " LIGHT_GREEN "Process ID: %d" RESET, getProcessID());
     pthread_t bg_keyboard, bg_rt, bg_ecatcheck;
 
-    pthread_create(&bg_keyboard, NULL, bgKeyboardDoWork, NULL); // 鍵盤執行序
+    pthread_create(&bg_keyboard, NULL, bgKeyboardDoWork, NULL); // 鍵盤輸入執行序
+    usleep(1000);
+    pthread_create(&bg_ecatcheck, NULL, bgEcatCheckDoWork, NULL); // EC狀態檢查執行序
     usleep(1000);
     pthread_create(&bg_rt, NULL, bgRealtimeDoWork, NULL); // RT執行序
-    pthread_create(&bg_ecatcheck, NULL, bgEcatCheckDoWork, NULL); // RT執行序
 
 
     // 等待執行緒結束
-    pthread_join(bg_ecatcheck, NULL);
     pthread_join(bg_rt, NULL);
+    pthread_join(bg_ecatcheck, NULL);
     pthread_join(bg_keyboard, NULL);
     return 0;
 }
