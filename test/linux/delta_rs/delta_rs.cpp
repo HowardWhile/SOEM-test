@@ -86,8 +86,8 @@ int checkSlaveConfig(void)
         for (int i = 1; i <= ec_slavecount; i++)
         {
             printf("Slave %d:\n", i);
-            printf("  Vendor ID: 0x%04X\n", ec_slave[i].eep_id);
-            printf("  Product Code: 0x%04X\n", ec_slave[i].eep_man);
+            printf("  Vendor ID: 0x%04X\n", ec_slave[i].eep_man);
+            printf("  Product Code: 0x%04X\n", ec_slave[i].eep_id);
             // 添加其他從站信息
         }
     }
@@ -100,7 +100,7 @@ int checkSlaveConfig(void)
     // 配置 EtherCAT 主站的時基
     ec_configdc();
 
-    // 啟動 EtherCAT 主站
+    // 切換 EtherCAT 主站至SAFE_OP模式
     if (ec_statecheck(0, EC_STATE_SAFE_OP, EC_TIMEOUTSTATE) != EC_STATE_SAFE_OP)
     {
         console("Slaves mapped, state to SAFE_OP... " RED "Failed." RESET);
@@ -363,7 +363,7 @@ void *bgRealtimeDoWork(void *arg)
         {
             console("ec_init on [%s] " LIGHT_GREEN "succeeded." RESET, EC_CH_NAME);
 
-            if (checkSlaveConfig() == 0) // 檢查連線的設備是否符合定義
+            if (checkSlaveConfig() == 0) // 檢查連線的設備是否符合定義 切換至SAFE_OP模式
             {
                 console("checkSlaveConfig..." LIGHT_GREEN "succeeded" RESET);
 
