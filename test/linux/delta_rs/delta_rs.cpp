@@ -258,6 +258,8 @@ void *bgEcatCheckDoWork(void *arg)
         
         //osal_usleep(10000);
         usleep(10000);
+        if (execExit)
+            break;
     }
 }
 
