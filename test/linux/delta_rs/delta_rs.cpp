@@ -14,8 +14,10 @@
 #define EC_CH_NAME "eno1"           // 通訊用的eth設備名稱
 #define CPU_ID 3                    // 指定運行的CPU編號
 #define PERIOD_NS (1 * 1000 * 1000) // 1ms rt任務週期
+#define EC_TIMEOUTMON 500
 // ----------------------------------------------------------------
 bool execExit = false; // 開始解建構程式
+
 // ----------------------------------------------------------------
 // realtime 性能計算與顯示
 // ----------------------------------------------------------------
@@ -24,6 +26,7 @@ int64_t cyc_count = 0;
 int64_t max_dt = LLONG_MIN;
 int64_t min_dt = LLONG_MAX;
 int64_t sum_dt = 0;
+bool needlf = false; // 顯示換行用
 void update_dt(int64_t dt_ns)
 {
     ns_dt = dt_ns;
@@ -45,13 +48,17 @@ void displayRealTimeInfo()
             max_dt / 1000,
             (double)sum_dt / cyc_count / 1000);
     MOVEUP(1);
+    needlf = true;
 }
 
 // ----------------------------------------------------------------
 // ethercat
 // ----------------------------------------------------------------
 char IOmap[4096];
-volatile int wkc = 0;
+int wkc = 0;
+int expected_wkc = 0;
+bool inOP = false;
+int currentgroup = 0;
 
 int checkSlaveConfig(void)
 {
@@ -168,6 +175,92 @@ void ec_sync(int64 reftime, int64 cycletime, int64 *offsettime)
     *offsettime = -(delta / 100) - (integral / 20);
 }
 
+// 檢查EtherCAT 主站是否正常
+void *bgEcatCheckDoWork(void *arg)
+{
+    // ref:
+    // https://github.com/OpenEtherCATsociety/SOEM/blob/master/test/linux/simple_test/simple_test.c
+    // ecatcheck()
+    
+    int slave;
+    (void)arg; /* Not used */
+
+    console("bgEcatCheckDoWork start, " LIGHT_GREEN "Thread ID: %d" RESET, getThreadID());
+
+    while (1)
+    {
+        if (inOP && ((wkc < expected_wkc) || ec_group[currentgroup].docheckstate))
+        {
+            if (needlf)
+            {
+                needlf = FALSE;
+                MOVEDOWN(1);
+            }
+            /* one ore more slaves are not responding */
+            ec_group[currentgroup].docheckstate = FALSE;
+            ec_readstate();
+            for (slave = 1; slave <= ec_slavecount; slave++)
+            {
+                if ((ec_slave[slave].group == currentgroup) && (ec_slave[slave].state != EC_STATE_OPERATIONAL))
+                {
+                    ec_group[currentgroup].docheckstate = TRUE;
+                    if (ec_slave[slave].state == (EC_STATE_SAFE_OP + EC_STATE_ERROR))
+                    {
+                        printf("ERROR : slave %d is in SAFE_OP + ERROR, attempting ack.\n", slave);
+                        ec_slave[slave].state = (EC_STATE_SAFE_OP + EC_STATE_ACK);
+                        ec_writestate(slave);
+                    }
+                    else if (ec_slave[slave].state == EC_STATE_SAFE_OP)
+                    {
+                        printf("WARNING : slave %d is in SAFE_OP, change to OPERATIONAL.\n", slave);
+                        ec_slave[slave].state = EC_STATE_OPERATIONAL;
+                        ec_writestate(slave);
+                    }
+                    else if (ec_slave[slave].state > EC_STATE_NONE)
+                    {
+                        if (ec_reconfig_slave(slave, EC_TIMEOUTMON))
+                        {
+                            ec_slave[slave].islost = FALSE;
+                            printf("MESSAGE : slave %d reconfigured\n", slave);
+                        }
+                    }
+                    else if (!ec_slave[slave].islost)
+                    {
+                        /* re-check state */
+                        ec_statecheck(slave, EC_STATE_OPERATIONAL, EC_TIMEOUTRET);
+                        if (ec_slave[slave].state == EC_STATE_NONE)
+                        {
+                            ec_slave[slave].islost = TRUE;
+                            printf("ERROR : slave %d lost\n", slave);
+                        }
+                    }
+                }
+                if (ec_slave[slave].islost)
+                {
+                    if (ec_slave[slave].state == EC_STATE_NONE)
+                    {
+                        if (ec_recover_slave(slave, EC_TIMEOUTMON))
+                        {
+                            ec_slave[slave].islost = FALSE;
+                            printf("MESSAGE : slave %d recovered\n", slave);
+                        }
+                    }
+                    else
+                    {
+                        ec_slave[slave].islost = FALSE;
+                        printf("MESSAGE : slave %d found\n", slave);
+                    }
+                }
+            }
+            if (!ec_group[currentgroup].docheckstate)
+                printf("OK : all slaves resumed OPERATIONAL.\n");
+        }
+        
+        //osal_usleep(10000);
+        usleep(10000);
+    }
+}
+
 // ----------------------------------------------------------------
 // 鍵盤控制
 // ----------------------------------------------------------------
@@ -263,11 +356,15 @@ void *bgRealtimeDoWork(void *arg)
             {
                 console("checkSlaveConfig..." LIGHT_GREEN "succeeded" RESET);
 
-                if (checkOperational() == 0) 
+                // 計算預期的 work count
+                expected_wkc = (ec_group[0].outputsWKC * 2) + ec_group[0].inputsWKC;
+
+                if (checkOperational() == 0)
                 {
                     console(LIGHT_GREEN "Operational state reached for all slaves." RESET);
+                    inOP = true;
 
-                    struct timespec time_next_execution, time_now;                    
+                    struct timespec time_next_execution, time_now;
                     if (clock_gettime(CLOCK_MONOTONIC, &time_next_execution) == -1) // 當前的精準時間
                     {
                         console("clock_gettime " RED "%s" RESET, strerror(errno));
@@ -283,7 +380,7 @@ void *bgRealtimeDoWork(void *arg)
                         // wait to cycle start
                         clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &time_next_execution, NULL);
 
-                        clock_gettime(CLOCK_MONOTONIC, &time_now); // for rt benchmark        
+                        clock_gettime(CLOCK_MONOTONIC, &time_now); // for rt benchmark
 
                         if (ec_slave[0].hasdc)
                         {
@@ -300,13 +397,10 @@ void *bgRealtimeDoWork(void *arg)
                         // logic
                         // -------------------------------------
 
-
-
                         // -------------------------------------
                         // update outputs
                         // -------------------------------------
                         ec_send_processdata();
-
 
                         // -------------------------------------
                         // rt benchmark
@@ -324,6 +418,7 @@ void *bgRealtimeDoWork(void *arg)
                         if (execExit)
                             break;
                     }
+                    inOP = false;
                 }
                 else
                 {
@@ -363,13 +458,16 @@ void *bgRealtimeDoWork(void *arg)
 int main()
 {
     console("delta_rs SOEM (Simple Open EtherCAT Master) Start... " LIGHT_GREEN "Process ID: %d" RESET, getProcessID());
-    pthread_t bg_keyboard, bg_rt, bg_;
+    pthread_t bg_keyboard, bg_rt, bg_ecatcheck;
 
     pthread_create(&bg_keyboard, NULL, bgKeyboardDoWork, NULL); // 鍵盤執行序
     usleep(1000);
     pthread_create(&bg_rt, NULL, bgRealtimeDoWork, NULL); // RT執行序
+    pthread_create(&bg_ecatcheck, NULL, bgEcatCheckDoWork, NULL); // RT執行序
+
 
     // 等待執行緒結束
+    pthread_join(bg_ecatcheck, NULL);
     pthread_join(bg_rt, NULL);
     pthread_join(bg_keyboard, NULL);
     return 0;
