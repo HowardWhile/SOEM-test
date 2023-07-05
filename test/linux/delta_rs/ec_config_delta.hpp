@@ -4,6 +4,9 @@
 #include "arc_ec_tool.hpp"
 #include "arc_console.hpp"
 
+// -------------------------------------------------
+// TxPDO (inputs)
+// -------------------------------------------------
 typedef struct
 {
 
@@ -28,6 +31,9 @@ typedef struct
 
 } Delta_ASDA_I3_E_4th_TxPDO_Mapping_t; // 0x1A03
 
+// -------------------------------------------------
+// RxPDO (Outputs)
+// -------------------------------------------------
 typedef struct
 {
 

@@ -10,7 +10,6 @@
 #include "arc_console.hpp"
 #include "ec_config_delta.hpp"
 
-
 // ----------------------------------------------------------------
 #define EC_CH_NAME "eno1"           // 通訊用的eth設備名稱
 #define CPU_ID 3                    // 指定運行的CPU編號
@@ -55,7 +54,59 @@ void displayRealTimeInfo()
     MOVEUP(1);
     needlf = true;
 }
+// ----------------------------------------------------------------
+// 伺服馬達控制
+// ----------------------------------------------------------------
+bool ctrl_word[16] = {0};
+// servo on
+bool request_servo_on = false;
+bool request_servo_off = false;
+int servo_on_step = 0;
+void servo_on_work()
+{
+    switch (servo_on_step++)
+    {
 
+    // 故障復位
+    case 0:
+        ctrl_word[7] = false;
+        break;
+    case 1:
+        ctrl_word[7] = true;
+        break;
+    case 2:
+        ctrl_word[7] = false;
+        break;
+
+    // ref: delta ASDA-A3.pdf 使驅動器的狀態機進入準備狀態
+    case 3: // 關閉
+        ctrl_word[0] = false;
+        ctrl_word[1] = true;
+        ctrl_word[2] = true;
+        ctrl_word[3] = false;
+        ctrl_word[4] = false;
+        break;
+
+    case 4: // 準備使能
+        ctrl_word[0] = true;
+        ctrl_word[1] = true;
+        ctrl_word[2] = true;
+        ctrl_word[3] = false;
+        ctrl_word[4] = false;
+        break;
+
+    case 5: // 始能
+        ctrl_word[0] = true;
+        ctrl_word[1] = true;
+        ctrl_word[2] = true;
+        ctrl_word[3] = true;
+        ctrl_word[4] = false;
+        break;
+
+    default:
+        break;
+    }
+}
 // ----------------------------------------------------------------
 // ethercat
 // ----------------------------------------------------------------
@@ -188,7 +239,7 @@ void *bgEcatCheckDoWork(void *arg)
     // ref:
     // https://github.com/OpenEtherCATsociety/SOEM/blob/master/test/linux/simple_test/simple_test.c
     // ecatcheck()
-    
+
     int slave;
     (void)arg; /* Not used */
 
@@ -262,8 +313,7 @@ void *bgEcatCheckDoWork(void *arg)
             if (!ec_group[currentgroup].docheckstate)
                 printf("OK : all slaves resumed OPERATIONAL.\n");
         }
-        
-        //osal_usleep(10000);
+
         usleep(10000);
         if (execExit)
             break;
@@ -331,6 +381,13 @@ void *bgKeyboardDoWork(void *arg)
             execExit = 1;
             break;
 
+        // servo
+        case 'o':
+            request_servo_on = true;
+            break;
+        case 'p':
+            request_servo_off = true;
+            break;
         default:
             break;
         }
@@ -404,13 +461,40 @@ void *bgRealtimeDoWork(void *arg)
                         // -------------------------------------
                         wkc = ec_receive_processdata(EC_TIMEOUTRET);
 
+                        Delta_ASDA_I3_E_2nd_TxPDO_Mapping_t *iptr;
+                        iptr = (Delta_ASDA_I3_E_2nd_TxPDO_Mapping_t *)ec_slave[ASDA_I3_E_AXIS_6].inputs;
+
                         // -------------------------------------
                         // logic
                         // -------------------------------------
+                        if (request_servo_on)
+                        {
+                            request_servo_on = false;
+                            servo_on_work();
+                        }
+
+                        if (request_servo_off)
+                        {
+                            request_servo_off = false;
+                            servo_on_step = 0;
+                            ctrl_word[0] = false;
+                            ctrl_word[1] = false;
+                            ctrl_word[2] = false;
+                            ctrl_word[3] = false;
+                            ctrl_word[5] = false;
+                        }
 
                         // -------------------------------------
                         // update outputs
                         // -------------------------------------
+                        if (ec_slavecount >= ASDA_I3_E_AXIS_6)
+                        {
+                            Delta_ASDA_I3_E_2nd_RxPDO_Mapping_t *optr;
+                            optr = (Delta_ASDA_I3_E_2nd_RxPDO_Mapping_t *)ec_slave[ASDA_I3_E_AXIS_6].outputs;
+                            for (int i = 0; i < 16; i++)
+                                optr->ControlWord |= (ctrl_word[i] ? 1 : 0) << i;
+                        }
+
                         ec_send_processdata();
 
                         // -------------------------------------
@@ -476,7 +560,6 @@ int main()
     pthread_create(&bg_ecatcheck, NULL, bgEcatCheckDoWork, NULL); // EC狀態檢查執行序
     usleep(1000);
     pthread_create(&bg_rt, NULL, bgRealtimeDoWork, NULL); // RT執行序
-
 
     // 等待執行緒結束
     pthread_join(bg_rt, NULL);
