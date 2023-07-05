@@ -5,16 +5,21 @@
 
 #include <termios.h> //keyboardPISOX中定义的标准接口
 
-#include "ethercat.h" // SOEM
-
-#include "arc_console.hpp"
+#include "arc_ec_tool.hpp"
 #include "arc_rt_tool.hpp"
+#include "arc_console.hpp"
+#include "ec_config_delta.hpp"
+
 
 // ----------------------------------------------------------------
 #define EC_CH_NAME "eno1"           // 通訊用的eth設備名稱
 #define CPU_ID 3                    // 指定運行的CPU編號
 #define PERIOD_NS (1 * 1000 * 1000) // 1ms rt任務週期
 #define EC_TIMEOUTMON 500
+
+// Slave的站號
+#define ASDA_I3_E_AXIS_6 6
+
 // ----------------------------------------------------------------
 bool execExit = false; // 開始解建構程式
 
@@ -87,11 +92,13 @@ int checkSlaveConfig(void)
         }
     }
 
+    ec_slave[ASDA_I3_E_AXIS_6].PO2SOconfig = setupDelta_ASDA_I3_E;
+
     // 將本地記憶體與slave記憶體建立映射
     ec_config_map(&IOmap);
 
     // 配置 EtherCAT 主站的時基
-    // ec_configdc();
+    ec_configdc();
 
     // 啟動 EtherCAT 主站
     if (ec_statecheck(0, EC_STATE_SAFE_OP, EC_TIMEOUTSTATE) != EC_STATE_SAFE_OP)
@@ -261,6 +268,8 @@ void *bgEcatCheckDoWork(void *arg)
         if (execExit)
             break;
     }
+
+    return NULL;
 }
 
 // ----------------------------------------------------------------
