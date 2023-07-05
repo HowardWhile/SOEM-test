@@ -493,8 +493,17 @@ void *bgRealtimeDoWork(void *arg)
                         {
                             Delta_ASDA_I3_E_2nd_RxPDO_Mapping_t *optr;
                             optr = (Delta_ASDA_I3_E_2nd_RxPDO_Mapping_t *)ec_slave[ASDA_I3_E_AXIS_6].outputs;
+                            
+                            // int16 ControlWord = ctrl_word[16]
+                            optr->ControlWord = 0;
                             for (int i = 0; i < 16; i++)
                                 optr->ControlWord |= (ctrl_word[i] ? 1 : 0) << i;
+
+                            // EXEC_INTERVAL(50)
+                            // {
+                            //     printBinary16(optr->ControlWord);
+                            // }
+                            // EXEC_INTERVAL_END
                         }
 
                         ec_send_processdata();

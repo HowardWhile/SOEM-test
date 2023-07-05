@@ -186,6 +186,21 @@ char *clock_now()
 #define MOVEUP(x) printf("\033[%dA", (x))
 #define MOVEDOWN(x) printf("\033[%dB", (x))
 // printf( GREEN "Here is some text\n" RESET );
-#endif // ENABLE_ARC_CONSOLE
 
+
+static inline void printBinary16(int16_t num)
+{
+    PRINT_FUNCTION("[" TIMESTAMP_FORMATE "] ", TIMESTAMP_FUNCTION());
+
+    for (int i = 15; i >= 0; i--)
+    {
+        PRINT_FUNCTION("%d", (num >> i) & 1);
+        if (i % 4 == 0)
+            PRINT_FUNCTION(" ");
+    }
+    PRINT_FUNCTION("b\r\n");
+}
+
+
+#endif // ENABLE_ARC_CONSOLE
 #endif // arc_console_h__
