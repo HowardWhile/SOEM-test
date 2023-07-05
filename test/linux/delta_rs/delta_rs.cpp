@@ -477,11 +477,13 @@ void *bgRealtimeDoWork(void *arg)
                         {
                             request_servo_off = false;
                             servo_on_step = 0;
+                            //ref ASDA-A3 p914
                             ctrl_word[0] = false;
-                            ctrl_word[1] = false;
-                            ctrl_word[2] = false;
-                            ctrl_word[3] = false;
-                            ctrl_word[5] = false;
+                            ctrl_word[1] = true;
+                            ctrl_word[2] = true;
+                            ctrl_word[7] = false;
+                            //console("request_servo_off");
+
                         }
 
                         // -------------------------------------
@@ -524,9 +526,9 @@ void *bgRealtimeDoWork(void *arg)
                 console("checkSlaveConfig " RED "Failed." RESET);
             }
 
-            // 恢復成PRE_OP
-            console("[Request PRE_OP state for all slaves");
-            ec_slave[0].state = EC_STATE_PRE_OP;
+            // 恢復成INIT
+            console("[Request INIT state for all slaves");
+            ec_slave[0].state = EC_STATE_INIT;
             ec_writestate(0);
 
             // 停止 EtherCAT 通信並關閉連接。

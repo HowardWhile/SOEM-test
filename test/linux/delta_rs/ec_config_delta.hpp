@@ -61,17 +61,17 @@ static int setupDelta_ASDA_I3_E(uint16 slave)
 {
     console_tag("Delta_ASDA_I3_E", "setup slave(%d)", slave);
 
-    const int vandor_id = 0x1DD;
-    const int product_code = 0x10306081;
+    const int vandor_id = 0x01DD;
+    const int product_code = 0x10306086;
 
     if (ec_slave[slave].eep_man != vandor_id ||
         ec_slave[slave].eep_id != product_code)
     {
         console_tag("Delta_ASDA_I3_E", RED "slave(%d) product not compatible" RESET, slave);
-        //return -1;
+        return -1;
     }
 
-    const int excepted_wkc = 22; // 預期寫入
+    const int excepted_wkc = 23; // 預期寫入的比數
     int wkc = 0;
 
     // 設定為0x0 停用配置
