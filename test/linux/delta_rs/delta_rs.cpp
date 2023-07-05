@@ -277,35 +277,45 @@ void *bgRealtimeDoWork(void *arg)
                     int64_t offset_time, dt;
                     while (!execExit)
                     {
-                        // sleep直到指定的時間點
+                        // 計算下一個喚醒時間
                         addTimespec(&time_next_execution, cycletime + offset_time);
+
+                        // wait to cycle start
                         clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &time_next_execution, NULL);
 
-                        // ---------------------------------------------------
-                        // rx
-                        // ---------------------------------------------------
-                        wkc = ec_receive_processdata(EC_TIMEOUTRET);
-                        // ---------------------------------------------------
-                        // 取得當前的精準時間為了計算RT能力
-                        clock_gettime(CLOCK_MONOTONIC, &time_now); // rt benchmark
+                        clock_gettime(CLOCK_MONOTONIC, &time_now); // for rt benchmark        
+
                         if (ec_slave[0].hasdc)
                         {
                             // 計算offse_time以獲得讓Linux時間與同步DC時間
                             ec_sync(ec_DCtime, cycletime, &offset_time);
                         }
 
-                        // ---------------------------------------------------
-                        // tx
-                        // ---------------------------------------------------
+                        // -------------------------------------
+                        // renew inputs
+                        // -------------------------------------
+                        wkc = ec_receive_processdata(EC_TIMEOUTRET);
+
+                        // -------------------------------------
+                        // logic
+                        // -------------------------------------
+
+
+
+                        // -------------------------------------
+                        // update outputs
+                        // -------------------------------------
                         ec_send_processdata();
-                        // ---------------------------------------------------
+
+
+                        // -------------------------------------
                         // rt benchmark
                         // 計算用於測定rt能力的時間差距
                         int64_t dt = calcTimeDiffInNs(time_now, time_next_execution);
                         update_dt(dt);
                         EXEC_INTERVAL(500)
                         {
-                            // 每30ms顯示一次實時統計的訊息
+                            // 每段時間顯示一次訊息
                             displayRealTimeInfo();
                         }
                         EXEC_INTERVAL_END
@@ -353,7 +363,7 @@ void *bgRealtimeDoWork(void *arg)
 int main()
 {
     console("delta_rs SOEM (Simple Open EtherCAT Master) Start... " LIGHT_GREEN "Process ID: %d" RESET, getProcessID());
-    pthread_t bg_keyboard, bg_rt;
+    pthread_t bg_keyboard, bg_rt, bg_;
 
     pthread_create(&bg_keyboard, NULL, bgKeyboardDoWork, NULL); // 鍵盤執行序
     usleep(1000);
