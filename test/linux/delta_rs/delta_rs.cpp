@@ -62,7 +62,7 @@ bool ctrl_word[16] = {0};
 bool request_servo_on = false;
 bool request_servo_off = false;
 int servo_on_step = 0;
-void servo_on_work()
+int servo_on_work()
 {
     switch (servo_on_step++)
     {
@@ -104,9 +104,30 @@ void servo_on_work()
         break;
 
     default:
-        break;
+        return 0;
+    }
+
+    return 1;
+}
+
+int clamp(int number, int minValue, int maxValue)
+{
+    if (number < minValue)
+    {
+        return minValue;
+    }
+    else if (number > maxValue)
+    {
+        return maxValue;
+    }
+    else
+    {
+        return number;
     }
 }
+int position = 0;
+int speed = 0;
+
 // ----------------------------------------------------------------
 // ethercat
 // ----------------------------------------------------------------
@@ -388,6 +409,33 @@ void *bgKeyboardDoWork(void *arg)
         case 'p':
             request_servo_off = true;
             break;
+
+        // position
+        case 'w':
+            position = 500;
+            break;
+        case 's':
+            position = 0;
+            break;
+        case 'x':
+            position = 500;
+            break;
+
+        // speed 
+        case 'e':
+            speed += 5;
+            if(speed > 100)
+                speed = 100;
+            break;
+        case 'd':
+            speed = 0;
+            break;
+        case 'c':
+            speed -= 5;
+            if(speed < 0)
+                speed = 0;
+            break;
+        
         default:
             break;
         }
@@ -469,8 +517,10 @@ void *bgRealtimeDoWork(void *arg)
                         // -------------------------------------
                         if (request_servo_on)
                         {
-                            request_servo_on = false;
-                            servo_on_work();
+                            if(servo_on_work() == 0)
+                            {
+                                request_servo_on = false;
+                            }                            
                         }
 
                         if (request_servo_off)
@@ -483,8 +533,10 @@ void *bgRealtimeDoWork(void *arg)
                             ctrl_word[2] = true;
                             ctrl_word[7] = false;
                             //console("request_servo_off");
-
                         }
+
+
+                        int s = clamp(speed, 0, 100);
 
                         // -------------------------------------
                         // update outputs
@@ -498,6 +550,9 @@ void *bgRealtimeDoWork(void *arg)
                             optr->ControlWord = 0;
                             for (int i = 0; i < 16; i++)
                                 optr->ControlWord |= (ctrl_word[i] ? 1 : 0) << i;
+
+                            optr->TargetPosition = position;
+                            optr->TargetVelocity = s;
 
                             // EXEC_INTERVAL(50)
                             // {
