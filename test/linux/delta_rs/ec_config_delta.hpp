@@ -149,10 +149,13 @@ static int setupDelta_ASDA_I3_E(uint16 slave)
     wkc += drive_write8(slave, 0x1C12, 0, 1);
     wkc += drive_write8(slave, 0x1C13, 0, 1);
 
-    // ref: ASDA A2 5.3.3, ASDA A3 13.3.5    
-    // 設定週期同步位置模式 0x8
-    wkc += drive_write8(slave, 0x6060, 0, 8);
 
+    // ref: ASDA A2 5.3.3, ASDA A3 13.3.5        
+    // 設定週期同步位置模式 0x8 CSP MODE
+    //wkc += drive_write8(slave, 0x6060, 0, 8);
+
+    // ref: ASDA A3 13.3.1 PP Mode
+    wkc += drive_write8(slave, 0x6060, 0, 1);
 
     if (wkc != excepted_wkc)
     {

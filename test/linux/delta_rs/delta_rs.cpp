@@ -108,7 +108,28 @@ int servo_on_work()
         return 0;
     }
 
-    return 1;
+    return servo_on_step;
+}
+
+bool request_trigger = false;
+int servo_pp_trigger()
+{
+    static int step = 0;
+    switch (step++)
+    {
+    case 0:
+        ctrl_word[5] = true; // 命令立即生效模式
+        ctrl_word[4] = false;
+        break;
+
+    case 1:
+        ctrl_word[4] = true;
+        break;
+    default:
+        step = 0;
+        return 0;
+    }
+    return step;
 }
 
 int clamp(int number, int minValue, int maxValue)
@@ -132,9 +153,15 @@ int speed = 0;
 int displayServoInfo(Delta_ASDA_I3_E_2nd_TxPDO_Mapping_t *TxPDO, Delta_ASDA_I3_E_2nd_RxPDO_Mapping_t *RxPDO)
 {
     int line_count = 0;
-    console("ctrlword: 0x%X, (0x%X)*****", RxPDO->ControlWord, TxPDO->StatusWord);line_count++;
-    console("position: %d, (%d)*****", RxPDO->TargetPosition, TxPDO->ActualPosition);line_count++;
-    console("speed   : %d, (%d)*****", RxPDO->TargetVelocity, TxPDO->ActualVelocity);line_count++;
+    console("ctrlword: 0x%X, (0x%X)*****", RxPDO->ControlWord, TxPDO->StatusWord);
+    line_count++;
+    console("position: [%f], %f, (%f)*****", (float)position / 10000, (float)RxPDO->TargetPosition / 10000, (float)TxPDO->ActualPosition / 10000);
+    line_count++;
+    console("speed   : [%d], %d, (%d)*****", speed, RxPDO->TargetVelocity, TxPDO->ActualVelocity);
+    line_count++;
+    console("torque  : %d, (%d)*****", RxPDO->TargetTorque, TxPDO->ActualTorque);
+    line_count++;
+
     return line_count;
 }
 // ----------------------------------------------------------------
@@ -421,30 +448,35 @@ void *bgKeyboardDoWork(void *arg)
 
         // position
         case 'w':
-            position = 1000000;
+            position = 100*10000;
             break;
         case 's':
             position = 0;
             break;
         case 'x':
-            position = -1000000;
+            position = -100*10000;
             break;
 
         // speed 
         case 'e':
-            speed += 5;
-            if(speed > 100)
-                speed = 100;
+            speed += 100;
+            if(speed > 1000)
+                speed = 1000;
             break;
         case 'd':
             speed = 0;
             break;
         case 'c':
-            speed -= 5;
+            speed -= 100;
             if(speed < 0)
                 speed = 0;
             break;
-        
+
+        // trigger
+        case ' ':
+            request_trigger = true;
+            break;
+            
         default:
             break;
         }
@@ -517,8 +549,8 @@ void *bgRealtimeDoWork(void *arg)
                         // renew inputs
                         // -------------------------------------
                         wkc = ec_receive_processdata(EC_TIMEOUTRET);
-
                         Delta_ASDA_I3_E_2nd_TxPDO_Mapping_t *iptr = (Delta_ASDA_I3_E_2nd_TxPDO_Mapping_t *)ec_slave[ASDA_I3_E_AXIS_6].inputs;
+                        Delta_ASDA_I3_E_2nd_RxPDO_Mapping_t *optr = (Delta_ASDA_I3_E_2nd_RxPDO_Mapping_t *)ec_slave[ASDA_I3_E_AXIS_6].outputs;
 
                         // -------------------------------------
                         // logic
@@ -543,8 +575,19 @@ void *bgRealtimeDoWork(void *arg)
                             //console("request_servo_off");
                         }
 
-
-                        int s = clamp(speed, 0, 100);
+                        if (request_trigger)
+                        {
+                            optr->TargetPosition = position;
+                            optr->TargetVelocity = speed;
+                            if (servo_pp_trigger() == 1)
+                            {
+                                drive_write32(ASDA_I3_E_AXIS_6, 0x6081, 0, speed);
+                            }
+                            else if (servo_pp_trigger() == 0)
+                            {
+                                request_trigger = false;
+                            }
+                        }
 
                         // -------------------------------------
                         // update outputs
@@ -557,10 +600,7 @@ void *bgRealtimeDoWork(void *arg)
                             // int16 ControlWord = ctrl_word[16]
                             optr->ControlWord = 0;
                             for (int i = 0; i < 16; i++)
-                                optr->ControlWord |= (ctrl_word[i] ? 1 : 0) << i;
-
-                            optr->TargetPosition = position;
-                            optr->TargetVelocity = s;
+                                optr->ControlWord |= (ctrl_word[i] ? 1 : 0) << i;  
 
                             // EXEC_INTERVAL(50)
                             // {
@@ -609,7 +649,6 @@ void *bgRealtimeDoWork(void *arg)
             {
                 console("checkSlaveConfig " RED "Failed." RESET);
             }
-
             // 恢復成INIT
             console("[Request INIT state for all slaves");
             ec_slave[0].state = EC_STATE_INIT;
