@@ -115,16 +115,32 @@ int servo_on_work()
 bool request_trigger = false;
 int servo_pp_trigger()
 {
+    //ref:
+    // ASDA-A3.pdf 13-62(p915)
+    // ASDA-A3.pdf (p880)
     static int step = 0;
-    switch (step++)
+    switch (step)
     {
     case 0:
-        ctrl_word[5] = true; // 命令立即生效模式
-        ctrl_word[4] = false;
+        ctrl_word[4] = false; // RST 觸發命令
+        ctrl_word[5] = true;  // 命令立即生效模式
+        step++;
         break;
 
     case 1:
-        ctrl_word[4] = true;
+        if (status_word[12] == false) // 確認伺服收到命令訊號位元RST
+            step++;
+        break;
+    case 2:
+        ctrl_word[4] = true; // 觸發命令
+        step++;
+        break;
+    case 3:
+        if (status_word[12] == true) // 確認伺服收到命令訊號
+        {
+            ctrl_word[4] = false;    // RST 觸發命令
+            step++;
+        }
         break;
     default:
         step = 0;
@@ -449,40 +465,40 @@ void *bgKeyboardDoWork(void *arg)
 
         // position
         case 'w':
-            position = 100*10000;
+            position = 100 * 10000;
             break;
         case 's':
             position = 0;
             break;
         case 'x':
-            position = -100*10000;
+            position = -100 * 10000;
             break;
 
-        // speed 
+        // speed
         case 'e':
             speed += 10;
-            if(speed > 1000)
+            if (speed > 1000)
                 speed = 1000;
+            drive_write32(ASDA_I3_E_AXIS_6, 0x6081, 0, speed * 10000);
             break;
         case 'd':
             speed = 0;
+            drive_write32(ASDA_I3_E_AXIS_6, 0x6081, 0, speed * 10000);
             break;
         case 'c':
             speed -= 10;
-            if(speed < 0)
+            if (speed < 0)
                 speed = 0;
+            drive_write32(ASDA_I3_E_AXIS_6, 0x6081, 0, speed * 10000);
             break;
-
-        // trigger
-        case '1':
-            drive_write32(ASDA_I3_E_AXIS_6, 0x6081, 0, speed*10000);
-            ctrl_word[4] = true;
-            ctrl_word[5] = true;
-            break;
-        case '2':
-            ctrl_word[4] = false;
+        case '3':
+            
             break;
             
+        case ' ':
+            request_trigger = true;
+            break;
+
         default:
             break;
         }
@@ -561,48 +577,44 @@ void *bgRealtimeDoWork(void *arg)
                             status_word[i] = (iptr->StatusWord >> i) & 1;
                         }
 
-
                         // -------------------------------------
                         // logic
                         // -------------------------------------
                         Delta_ASDA_I3_E_2nd_RxPDO_Mapping_t *optr = (Delta_ASDA_I3_E_2nd_RxPDO_Mapping_t *)ec_slave[ASDA_I3_E_AXIS_6].outputs;
-                        
+
                         if (request_servo_on)
                         {
-                            if(servo_on_work() == 0)
+                            if (servo_on_work() == 0)
                             {
                                 request_servo_on = false;
-                            }                            
+                            }
                         }
 
                         if (request_servo_off)
                         {
                             request_servo_off = false;
                             servo_on_step = 0;
-                            //ref ASDA-A3 p914
+                            // ref ASDA-A3 p914
                             ctrl_word[0] = false;
                             ctrl_word[1] = true;
                             ctrl_word[2] = true;
                             ctrl_word[7] = false;
-                            //console("request_servo_off");
+                            // console("request_servo_off");
                         }
 
-                        optr->TargetPosition = position;
-                        //optr->TargetVelocity = speed;
-                        // if (request_trigger)
-                        // {
-                        //     optr->TargetPosition = position;
-                        //     optr->TargetVelocity = speed;
-                        //     if (servo_pp_trigger() == 1)
-                        //     {
-                        //         //drive_write32(ASDA_I3_E_AXIS_6, 0x6081, 0, speed);
-                        //         drive_write32(ASDA_I3_E_AXIS_6, 0x6081, 0, 10*10000);
-                        //     }
-                        //     else if (servo_pp_trigger() == 0)
-                        //     {
-                        //         request_trigger = false;
-                        //     }
-                        // }
+                        if (request_trigger)
+                        {
+                            if (status_word[2] == false) // 還沒有ServoOn
+                                request_trigger = false;
+                            else
+                            {
+                                int ret = servo_pp_trigger();
+                                if (ret == 0)
+                                {
+                                    request_trigger = false;
+                                }
+                            }
+                        }
 
                         // -------------------------------------
                         // update outputs
@@ -611,17 +623,19 @@ void *bgRealtimeDoWork(void *arg)
                         {
                             Delta_ASDA_I3_E_2nd_RxPDO_Mapping_t *optr;
                             optr = (Delta_ASDA_I3_E_2nd_RxPDO_Mapping_t *)ec_slave[ASDA_I3_E_AXIS_6].outputs;
-                            
+
                             // int16 ControlWord = ctrl_word[16]
                             optr->ControlWord = 0;
                             for (int i = 0; i < 16; i++)
-                                optr->ControlWord |= (ctrl_word[i] ? 1 : 0) << i;  
+                                optr->ControlWord |= (ctrl_word[i] ? 1 : 0) << i;
 
                             // EXEC_INTERVAL(50)
                             // {
                             //     printBinary16(optr->ControlWord);
                             // }
                             // EXEC_INTERVAL_END
+
+                            optr->TargetPosition = position;
                         }
 
                         ec_send_processdata();
@@ -631,7 +645,7 @@ void *bgRealtimeDoWork(void *arg)
                         // 計算用於測定rt能力的時間差距
                         int64_t dt = calcTimeDiffInNs(time_now, time_next_execution);
                         update_dt(dt);
-                        EXEC_INTERVAL(50)
+                        EXEC_INTERVAL(500)
                         {
                             Delta_ASDA_I3_E_2nd_TxPDO_Mapping_t *iptr = (Delta_ASDA_I3_E_2nd_TxPDO_Mapping_t *)ec_slave[ASDA_I3_E_AXIS_6].inputs;
                             Delta_ASDA_I3_E_2nd_RxPDO_Mapping_t *optr = (Delta_ASDA_I3_E_2nd_RxPDO_Mapping_t *)ec_slave[ASDA_I3_E_AXIS_6].outputs;
@@ -645,8 +659,8 @@ void *bgRealtimeDoWork(void *arg)
                             needlf = true;
 
                             // debug hexdump
-                            //dumpHex(ec_slave[ASDA_I3_E_AXIS_6].inputs, 32);
-                            //dumpHex(ec_slave[ASDA_I3_E_AXIS_6].outputs, 32);
+                            // dumpHex(ec_slave[ASDA_I3_E_AXIS_6].inputs, 32);
+                            // dumpHex(ec_slave[ASDA_I3_E_AXIS_6].outputs, 32);
                         }
                         EXEC_INTERVAL_END
                         // ---------------------------------------------------

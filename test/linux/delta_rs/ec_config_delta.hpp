@@ -71,7 +71,7 @@ static int setupDelta_ASDA_I3_E(uint16 slave)
         return -1;
     }
 
-    const int excepted_wkc = 23; // 預期寫入的比數
+    const int excepted_wkc = 24; // 預期寫入的比數
     int wkc = 0;
 
     // 設定為0x0 停用配置
@@ -156,6 +156,8 @@ static int setupDelta_ASDA_I3_E(uint16 slave)
 
     // ref: ASDA A3 13.3.1 PP Mode
     wkc += drive_write8(slave, 0x6060, 0, 1);
+    wkc += drive_write32(slave, 0x6081, 0, 50 * 10000); //為PP mode寫一個初始速度
+
 
     if (wkc != excepted_wkc)
     {
