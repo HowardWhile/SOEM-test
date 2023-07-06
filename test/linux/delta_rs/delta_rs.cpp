@@ -59,6 +59,7 @@ int displayRealTimeInfo()
 // 伺服馬達控制
 // ----------------------------------------------------------------
 bool ctrl_word[16] = {0};
+bool status_word[16] = {0};
 // servo on
 bool request_servo_on = false;
 bool request_servo_off = false;
@@ -459,7 +460,7 @@ void *bgKeyboardDoWork(void *arg)
 
         // speed 
         case 'e':
-            speed += 100;
+            speed += 10;
             if(speed > 1000)
                 speed = 1000;
             break;
@@ -467,14 +468,19 @@ void *bgKeyboardDoWork(void *arg)
             speed = 0;
             break;
         case 'c':
-            speed -= 100;
+            speed -= 10;
             if(speed < 0)
                 speed = 0;
             break;
 
         // trigger
-        case ' ':
-            request_trigger = true;
+        case '1':
+            drive_write32(ASDA_I3_E_AXIS_6, 0x6081, 0, speed*10000);
+            ctrl_word[4] = true;
+            ctrl_word[5] = true;
+            break;
+        case '2':
+            ctrl_word[4] = false;
             break;
             
         default:
@@ -550,11 +556,17 @@ void *bgRealtimeDoWork(void *arg)
                         // -------------------------------------
                         wkc = ec_receive_processdata(EC_TIMEOUTRET);
                         Delta_ASDA_I3_E_2nd_TxPDO_Mapping_t *iptr = (Delta_ASDA_I3_E_2nd_TxPDO_Mapping_t *)ec_slave[ASDA_I3_E_AXIS_6].inputs;
-                        Delta_ASDA_I3_E_2nd_RxPDO_Mapping_t *optr = (Delta_ASDA_I3_E_2nd_RxPDO_Mapping_t *)ec_slave[ASDA_I3_E_AXIS_6].outputs;
+                        for (int i = 0; i < 16; i++)
+                        {
+                            status_word[i] = (iptr->StatusWord >> i) & 1;
+                        }
+
 
                         // -------------------------------------
                         // logic
                         // -------------------------------------
+                        Delta_ASDA_I3_E_2nd_RxPDO_Mapping_t *optr = (Delta_ASDA_I3_E_2nd_RxPDO_Mapping_t *)ec_slave[ASDA_I3_E_AXIS_6].outputs;
+                        
                         if (request_servo_on)
                         {
                             if(servo_on_work() == 0)
@@ -575,19 +587,22 @@ void *bgRealtimeDoWork(void *arg)
                             //console("request_servo_off");
                         }
 
-                        if (request_trigger)
-                        {
-                            optr->TargetPosition = position;
-                            optr->TargetVelocity = speed;
-                            if (servo_pp_trigger() == 1)
-                            {
-                                drive_write32(ASDA_I3_E_AXIS_6, 0x6081, 0, speed);
-                            }
-                            else if (servo_pp_trigger() == 0)
-                            {
-                                request_trigger = false;
-                            }
-                        }
+                        optr->TargetPosition = position;
+                        //optr->TargetVelocity = speed;
+                        // if (request_trigger)
+                        // {
+                        //     optr->TargetPosition = position;
+                        //     optr->TargetVelocity = speed;
+                        //     if (servo_pp_trigger() == 1)
+                        //     {
+                        //         //drive_write32(ASDA_I3_E_AXIS_6, 0x6081, 0, speed);
+                        //         drive_write32(ASDA_I3_E_AXIS_6, 0x6081, 0, 10*10000);
+                        //     }
+                        //     else if (servo_pp_trigger() == 0)
+                        //     {
+                        //         request_trigger = false;
+                        //     }
+                        // }
 
                         // -------------------------------------
                         // update outputs
@@ -616,7 +631,7 @@ void *bgRealtimeDoWork(void *arg)
                         // 計算用於測定rt能力的時間差距
                         int64_t dt = calcTimeDiffInNs(time_now, time_next_execution);
                         update_dt(dt);
-                        EXEC_INTERVAL(500)
+                        EXEC_INTERVAL(50)
                         {
                             Delta_ASDA_I3_E_2nd_TxPDO_Mapping_t *iptr = (Delta_ASDA_I3_E_2nd_TxPDO_Mapping_t *)ec_slave[ASDA_I3_E_AXIS_6].inputs;
                             Delta_ASDA_I3_E_2nd_RxPDO_Mapping_t *optr = (Delta_ASDA_I3_E_2nd_RxPDO_Mapping_t *)ec_slave[ASDA_I3_E_AXIS_6].outputs;
