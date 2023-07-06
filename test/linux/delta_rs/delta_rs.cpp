@@ -31,6 +31,7 @@ int64_t max_dt = LLONG_MIN;
 int64_t min_dt = LLONG_MAX;
 int64_t sum_dt = 0;
 bool needlf = false; // 顯示換行用
+int line_count = 0;
 void update_dt(int64_t dt_ns)
 {
     ns_dt = dt_ns;
@@ -43,7 +44,7 @@ void update_dt(int64_t dt_ns)
     sum_dt += ns_dt;
     cyc_count++;
 }
-void displayRealTimeInfo()
+int displayRealTimeInfo()
 {
     console("cyc_count: %ld, Latency:(act, min, max, avg)us = (%-4ld, %ld, %ld, %.2f) ****",
             cyc_count,
@@ -51,8 +52,8 @@ void displayRealTimeInfo()
             min_dt / 1000,
             max_dt / 1000,
             (double)sum_dt / cyc_count / 1000);
-    MOVEUP(1);
-    needlf = true;
+
+    return 1;
 }
 // ----------------------------------------------------------------
 // 伺服馬達控制
@@ -128,6 +129,14 @@ int clamp(int number, int minValue, int maxValue)
 int position = 0;
 int speed = 0;
 
+int displayServoInfo(Delta_ASDA_I3_E_2nd_TxPDO_Mapping_t *TxPDO, Delta_ASDA_I3_E_2nd_RxPDO_Mapping_t *RxPDO)
+{
+    int line_count = 0;
+    console("ctrlword: 0x%X, (0x%X)*****", RxPDO->ControlWord, TxPDO->StatusWord);line_count++;
+    console("position: %d, (%d)*****", RxPDO->TargetPosition, TxPDO->ActualPosition);line_count++;
+    console("speed   : %d, (%d)*****", RxPDO->TargetVelocity, TxPDO->ActualVelocity);line_count++;
+    return line_count;
+}
 // ----------------------------------------------------------------
 // ethercat
 // ----------------------------------------------------------------
@@ -273,7 +282,7 @@ void *bgEcatCheckDoWork(void *arg)
             if (needlf)
             {
                 needlf = FALSE;
-                MOVEDOWN(1);
+                MOVEDOWN(100);
             }
             /* one ore more slaves are not responding */
             ec_group[currentgroup].docheckstate = FALSE;
@@ -412,13 +421,13 @@ void *bgKeyboardDoWork(void *arg)
 
         // position
         case 'w':
-            position = 500;
+            position = 1000000;
             break;
         case 's':
             position = 0;
             break;
         case 'x':
-            position = 500;
+            position = -1000000;
             break;
 
         // speed 
@@ -509,8 +518,7 @@ void *bgRealtimeDoWork(void *arg)
                         // -------------------------------------
                         wkc = ec_receive_processdata(EC_TIMEOUTRET);
 
-                        Delta_ASDA_I3_E_2nd_TxPDO_Mapping_t *iptr;
-                        iptr = (Delta_ASDA_I3_E_2nd_TxPDO_Mapping_t *)ec_slave[ASDA_I3_E_AXIS_6].inputs;
+                        Delta_ASDA_I3_E_2nd_TxPDO_Mapping_t *iptr = (Delta_ASDA_I3_E_2nd_TxPDO_Mapping_t *)ec_slave[ASDA_I3_E_AXIS_6].inputs;
 
                         // -------------------------------------
                         // logic
@@ -570,8 +578,20 @@ void *bgRealtimeDoWork(void *arg)
                         update_dt(dt);
                         EXEC_INTERVAL(500)
                         {
+                            Delta_ASDA_I3_E_2nd_TxPDO_Mapping_t *iptr = (Delta_ASDA_I3_E_2nd_TxPDO_Mapping_t *)ec_slave[ASDA_I3_E_AXIS_6].inputs;
+                            Delta_ASDA_I3_E_2nd_RxPDO_Mapping_t *optr = (Delta_ASDA_I3_E_2nd_RxPDO_Mapping_t *)ec_slave[ASDA_I3_E_AXIS_6].outputs;
+
                             // 每段時間顯示一次訊息
-                            displayRealTimeInfo();
+                            line_count += displayRealTimeInfo();
+                            line_count += displayServoInfo(iptr, optr);
+
+                            MOVEUP(line_count);
+                            line_count = 0;
+                            needlf = true;
+
+                            // debug hexdump
+                            //dumpHex(ec_slave[ASDA_I3_E_AXIS_6].inputs, 32);
+                            //dumpHex(ec_slave[ASDA_I3_E_AXIS_6].outputs, 32);
                         }
                         EXEC_INTERVAL_END
                         // ---------------------------------------------------

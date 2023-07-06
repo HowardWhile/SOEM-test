@@ -8,8 +8,6 @@
 #include <limits.h>
 #include <string.h>
 
-
-
 #define ENABLE_ARC_CONSOLE (1)
 #define PRINT_FUNCTION printf
 
@@ -21,7 +19,7 @@ int64_t clock_ms()
 {
     // https://stackoverflow.com/questions/3756323/how-to-get-the-current-time-in-milliseconds-from-c-in-linux
     struct timeval tnow;
-    gettimeofday(&tnow, NULL);                               // get current time
+    gettimeofday(&tnow, NULL);                                 // get current time
     int64_t msec = tnow.tv_sec * 1000LL + tnow.tv_usec / 1000; // calculate milliseconds
     // printf("milliseconds: %lld\n", milliseconds);
     return msec;
@@ -187,7 +185,6 @@ char *clock_now()
 #define MOVEDOWN(x) printf("\033[%dB", (x))
 // printf( GREEN "Here is some text\n" RESET );
 
-
 static inline void printBinary16(int16_t num)
 {
     PRINT_FUNCTION("[" TIMESTAMP_FORMATE "] ", TIMESTAMP_FUNCTION());
@@ -201,6 +198,52 @@ static inline void printBinary16(int16_t num)
     PRINT_FUNCTION("b\r\n");
 }
 
+static void dumpHex(const void *data, size_t size)
+{
+    const unsigned char *p = (const unsigned char *)data;
+    size_t i, j;
+
+    for (i = 0; i < size; i += 16)
+    {
+        printf("%08zx ", i);
+
+        // Print hex values
+        for (j = 0; j < 16; ++j)
+        {
+            if (i + j < size)
+                printf("%02x ", p[i + j]);
+            else
+                printf("   ");
+
+            // Insert an extra space between the 8th and 9th byte
+            if (j == 7)
+                printf(" ");
+        }
+
+        printf(" | ");
+
+        // Print ASCII values
+        for (j = 0; j < 16; ++j)
+        {
+            if (i + j < size)
+            {
+                unsigned char c = p[i + j];
+
+                // Non-printable characters are replaced with '.'
+                if (c < 32 || c > 126)
+                    c = '.';
+
+                printf("%c", c);
+            }
+            else
+            {
+                printf(" ");
+            }
+        }
+
+        printf("\n");
+    }
+}
 
 #endif // ENABLE_ARC_CONSOLE
 #endif // arc_console_h__

@@ -7,26 +7,26 @@
 // -------------------------------------------------
 // TxPDO (inputs)
 // -------------------------------------------------
-typedef struct
+typedef struct PACKED
 {
 
 } Delta_ASDA_I3_E_1st_TxPDO_Mapping_t; // 0x1A00
-typedef struct
+typedef struct PACKED
 {
     uint16_t StatusWord;            // 0x6041
     int32_t ActualPosition;         // 0x6064
-    int32_t VelocityActualValue;    // 0x606c
+    int32_t ActualVelocity;         // 0x606c
     int16_t ActualTorque;           // 0x6077
     uint16_t TouchProbeStatus;      // 0x60b9
     int32_t TouchProbePos1PosValue; // 0x60ba
     uint32_t DigitalInputs;         // 0x60fd
 
 } Delta_ASDA_I3_E_2nd_TxPDO_Mapping_t; // 0x1A01
-typedef struct
+typedef struct PACKED
 {
 
 } Delta_ASDA_I3_E_3rd_TxPDO_Mapping_t; // 0x1A02
-typedef struct
+typedef struct PACKED
 {
 
 } Delta_ASDA_I3_E_4th_TxPDO_Mapping_t; // 0x1A03
@@ -34,11 +34,11 @@ typedef struct
 // -------------------------------------------------
 // RxPDO (Outputs)
 // -------------------------------------------------
-typedef struct
+typedef struct PACKED
 {
 
 }Delta_ASDA_I3_E_1st_RxPDO_Mapping_t; // 0x1600
-typedef struct
+typedef struct PACKED
 {
     uint16_t ControlWord;        // 0x6040
     int32_t TargetPosition;      // 0x607A
@@ -47,11 +47,11 @@ typedef struct
     uint16_t TouchProbeFunction; // 0x60B8
 
 } Delta_ASDA_I3_E_2nd_RxPDO_Mapping_t; // 0x1601
-typedef struct
+typedef struct PACKED
 {
 
 }Delta_ASDA_I3_E_3rd_RxPDO_Mapping_t;// 0x1602
-typedef struct
+typedef struct PACKED
 {
 
 }Delta_ASDA_I3_E_4th_RxPDO_Mapping_t;// 0x1603
