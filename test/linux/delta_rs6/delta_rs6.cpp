@@ -5,6 +5,8 @@
 
 #include <termios.h> //keyboardPISOX中定义的标准接口
 
+#include <vector>
+
 #include "arc_ec_tool.hpp"
 #include "arc_rt_tool.hpp"
 #include "arc_console.hpp"
@@ -17,6 +19,11 @@
 #define EC_TIMEOUTMON 500
 
 // Slave的站號
+#define ASDA_I3_E_AXIS_1 1
+#define ASDA_I3_E_AXIS_2 2
+#define ASDA_I3_E_AXIS_3 3
+#define ASDA_I3_E_AXIS_4 4
+#define ASDA_I3_E_AXIS_5 5
 #define ASDA_I3_E_AXIS_6 6
 
 // ----------------------------------------------------------------
@@ -59,7 +66,26 @@ int displayRealTimeInfo()
 // 伺服馬達控制
 // ----------------------------------------------------------------
 bool ctrl_word[16] = {0};
-bool status_word[16] = {0};
+bool status_word[6][16] = {0};
+bool checkStatusWord(int address)
+{
+    return status_word[0][address] &&
+           status_word[1][address] &&
+           status_word[2][address] &&
+           status_word[3][address] &&
+           status_word[4][address] &&
+           status_word[5][address];
+}
+std::vector<bool> getStatusWords(int address)
+{
+    std::vector<bool> ret;
+    for (size_t i = 0; i < 6; i++)
+    {
+        ret.push_back((bool)status_word[i][address]);
+    }
+    return ret;
+}
+
 // servo on
 bool request_servo_on = false;
 bool request_servo_off = false;
@@ -128,7 +154,8 @@ int servo_pp_trigger()
         break;
 
     case 1:
-        if (status_word[12] == false) // 確認伺服收到命令訊號位元RST
+    
+        if (status_word[5][12] == false) // 確認伺服收到命令訊號位元RST
             step++;
         break;
     case 2:
@@ -136,7 +163,7 @@ int servo_pp_trigger()
         step++;
         break;
     case 3:
-        if (status_word[12] == true) // 確認伺服收到命令訊號
+        if (status_word[5][12] == true) // 確認伺服收到命令訊號
         {
             ctrl_word[4] = false;    // RST 觸發命令
             step++;
@@ -167,16 +194,63 @@ int clamp(int number, int minValue, int maxValue)
 int position = 0;
 int speed = 0;
 
-int displayServoInfo(Delta_ASDA_I3_E_2nd_TxPDO_Mapping_t *TxPDO, Delta_ASDA_I3_E_2nd_RxPDO_Mapping_t *RxPDO)
+int displayServoInfo()
 {
+    
+    Delta_ASDA_I3_E_2nd_TxPDO_Mapping_t *i_pdo[6];
+    i_pdo[0] = (Delta_ASDA_I3_E_2nd_TxPDO_Mapping_t *)ec_slave[ASDA_I3_E_AXIS_1].inputs;
+    i_pdo[1] = (Delta_ASDA_I3_E_2nd_TxPDO_Mapping_t *)ec_slave[ASDA_I3_E_AXIS_2].inputs;
+    i_pdo[2] = (Delta_ASDA_I3_E_2nd_TxPDO_Mapping_t *)ec_slave[ASDA_I3_E_AXIS_3].inputs;
+    i_pdo[3] = (Delta_ASDA_I3_E_2nd_TxPDO_Mapping_t *)ec_slave[ASDA_I3_E_AXIS_4].inputs;
+    i_pdo[4] = (Delta_ASDA_I3_E_2nd_TxPDO_Mapping_t *)ec_slave[ASDA_I3_E_AXIS_5].inputs;
+    i_pdo[5] = (Delta_ASDA_I3_E_2nd_TxPDO_Mapping_t *)ec_slave[ASDA_I3_E_AXIS_6].inputs;    
+    
+    Delta_ASDA_I3_E_2nd_RxPDO_Mapping_t *o_pdo[6];
+    o_pdo[0] = (Delta_ASDA_I3_E_2nd_RxPDO_Mapping_t *)ec_slave[ASDA_I3_E_AXIS_1].outputs;
+    o_pdo[1] = (Delta_ASDA_I3_E_2nd_RxPDO_Mapping_t *)ec_slave[ASDA_I3_E_AXIS_2].outputs;
+    o_pdo[2] = (Delta_ASDA_I3_E_2nd_RxPDO_Mapping_t *)ec_slave[ASDA_I3_E_AXIS_3].outputs;
+    o_pdo[3] = (Delta_ASDA_I3_E_2nd_RxPDO_Mapping_t *)ec_slave[ASDA_I3_E_AXIS_4].outputs;
+    o_pdo[4] = (Delta_ASDA_I3_E_2nd_RxPDO_Mapping_t *)ec_slave[ASDA_I3_E_AXIS_5].outputs;
+    o_pdo[5] = (Delta_ASDA_I3_E_2nd_RxPDO_Mapping_t *)ec_slave[ASDA_I3_E_AXIS_6].outputs;
+
+    // 顯示控制字元
     int line_count = 0;
-    console("ctrlword: 0x%X, (0x%X)*****", RxPDO->ControlWord, TxPDO->StatusWord);
+    consolex("ctrlword: 0x%X", o_pdo[0]->ControlWord);
+    for (int i = 0; i < 6; i++)
+    {
+        printf(", %d:0x%X", i, i_pdo[i]->StatusWord);
+    }
+    printf("*****\n");
     line_count++;
-    console("position: [%f], %f, (%f)*****", (float)position / 10000, (float)RxPDO->TargetPosition / 10000, (float)TxPDO->ActualPosition / 10000);
+
+
+    // 顯示servo on的狀態
+    int axis_count;
+    axis_count = 0;
+    consolex("servo on: [%d]", ctrl_word[3]); // control word bit3 = Enable operation
+    auto operation_enabled = getStatusWords(2); // status word bit2 = operation enabled
+    for (bool b : operation_enabled) 
+    {
+        printf(" %d:%d", axis_count++, b);
+    }
+    printf("*****\n");
     line_count++;
-    console("speed   : [%d], %d, (%d)*****", speed, RxPDO->TargetVelocity, TxPDO->ActualVelocity);
+
+    // 異常訊號
+    consolex("Fault:" ); 
+    auto fault = getStatusWords(3); // status word bit3 = 異常訊號
+    axis_count = 0;
+    for (bool b : fault) 
+    {
+        printf(" %d:%d", axis_count++, b);
+    }
+    printf("*****\n");
     line_count++;
-    console("torque  : %d, (%d)*****", RxPDO->TargetTorque, TxPDO->ActualTorque);
+
+    //
+    console("position: [%f]*****", (float)position / 10000);
+    line_count++;
+    console("speed   : [%d]*****", speed);
     line_count++;
 
     return line_count;
@@ -217,6 +291,12 @@ int checkSlaveConfig(void)
         }
     }
 
+    
+    ec_slave[ASDA_I3_E_AXIS_1].PO2SOconfig = setupDelta_ASDA_I3_E;
+    ec_slave[ASDA_I3_E_AXIS_2].PO2SOconfig = setupDelta_ASDA_I3_E;
+    ec_slave[ASDA_I3_E_AXIS_3].PO2SOconfig = setupDelta_ASDA_I3_E;
+    ec_slave[ASDA_I3_E_AXIS_4].PO2SOconfig = setupDelta_ASDA_I3_E;
+    ec_slave[ASDA_I3_E_AXIS_5].PO2SOconfig = setupDelta_ASDA_I3_E;
     ec_slave[ASDA_I3_E_AXIS_6].PO2SOconfig = setupDelta_ASDA_I3_E;
 
     // 將本地記憶體與slave記憶體建立映射
@@ -570,11 +650,18 @@ void *bgRealtimeDoWork(void *arg)
                         // -------------------------------------
                         // renew inputs
                         // -------------------------------------
-                        wkc = ec_receive_processdata(EC_TIMEOUTRET);
-                        Delta_ASDA_I3_E_2nd_TxPDO_Mapping_t *iptr = (Delta_ASDA_I3_E_2nd_TxPDO_Mapping_t *)ec_slave[ASDA_I3_E_AXIS_6].inputs;
-                        for (int i = 0; i < 16; i++)
+                        wkc = ec_receive_processdata(EC_TIMEOUTRET);                        
+                        
+                        // 更新6個關節模組的StatusWord
+                        for (int i = 0; i < 6; i++)
                         {
-                            status_word[i] = (iptr->StatusWord >> i) & 1;
+                            Delta_ASDA_I3_E_2nd_TxPDO_Mapping_t *iptr = (Delta_ASDA_I3_E_2nd_TxPDO_Mapping_t *)ec_slave[i+1].inputs;
+                            uint16_t sw = iptr->StatusWord;
+                            for (int j = 0; j < 16; j++)
+                            {
+                                
+                                status_word[i][j] = (sw >> j) & 1;
+                            }
                         }
 
                         // -------------------------------------
@@ -604,7 +691,7 @@ void *bgRealtimeDoWork(void *arg)
 
                         if (request_trigger)
                         {
-                            if (status_word[2] == false) // 還沒有ServoOn
+                            if (checkStatusWord(2) == false) // 還沒有ServoOn
                                 request_trigger = false;
                             else
                             {
@@ -622,12 +709,15 @@ void *bgRealtimeDoWork(void *arg)
                         if (ec_slavecount >= ASDA_I3_E_AXIS_6)
                         {
                             Delta_ASDA_I3_E_2nd_RxPDO_Mapping_t *optr;
-                            optr = (Delta_ASDA_I3_E_2nd_RxPDO_Mapping_t *)ec_slave[ASDA_I3_E_AXIS_6].outputs;
 
-                            // int16 ControlWord = ctrl_word[16]
-                            optr->ControlWord = 0;
-                            for (int i = 0; i < 16; i++)
-                                optr->ControlWord |= (ctrl_word[i] ? 1 : 0) << i;
+                            for (int axis_idx = ASDA_I3_E_AXIS_1; axis_idx <= ASDA_I3_E_AXIS_6; axis_idx++)
+                            {
+                                optr = (Delta_ASDA_I3_E_2nd_RxPDO_Mapping_t *)ec_slave[axis_idx].outputs;
+                                // int16 ControlWord = ctrl_word[16]
+                                optr->ControlWord = 0;
+                                for (int i = 0; i < 16; i++)
+                                    optr->ControlWord |= (ctrl_word[i] ? 1 : 0) << i;
+                            }
 
                             // EXEC_INTERVAL(50)
                             // {
@@ -645,14 +735,14 @@ void *bgRealtimeDoWork(void *arg)
                         // 計算用於測定rt能力的時間差距
                         int64_t dt = calcTimeDiffInNs(time_now, time_next_execution);
                         update_dt(dt);
-                        EXEC_INTERVAL(500)
+                        EXEC_INTERVAL(50)
                         {
                             Delta_ASDA_I3_E_2nd_TxPDO_Mapping_t *iptr = (Delta_ASDA_I3_E_2nd_TxPDO_Mapping_t *)ec_slave[ASDA_I3_E_AXIS_6].inputs;
                             Delta_ASDA_I3_E_2nd_RxPDO_Mapping_t *optr = (Delta_ASDA_I3_E_2nd_RxPDO_Mapping_t *)ec_slave[ASDA_I3_E_AXIS_6].outputs;
 
                             // 每段時間顯示一次訊息
                             line_count += displayRealTimeInfo();
-                            line_count += displayServoInfo(iptr, optr);
+                            line_count += displayServoInfo();
 
                             MOVEUP(line_count);
                             line_count = 0;

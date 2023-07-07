@@ -115,6 +115,11 @@ char *clock_now()
         PRINT_FUNCTION(__VA_ARGS__);                                      \
         PRINT_FUNCTION("\r\n");                                           \
     }
+#define consolex(...)                                                     \
+    {                                                                     \
+        PRINT_FUNCTION("[" TIMESTAMP_FORMATE "] ", TIMESTAMP_FUNCTION()); \
+        PRINT_FUNCTION(__VA_ARGS__);                                      \
+    }
 #define consoler(...)                                                       \
     {                                                                       \
         PRINT_FUNCTION("\r[" TIMESTAMP_FORMATE "] ", TIMESTAMP_FUNCTION()); \
