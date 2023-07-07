@@ -191,7 +191,7 @@ int clamp(int number, int minValue, int maxValue)
         return number;
     }
 }
-int position = 0;
+int position[6] = {0};
 int speed = 0;
 
 int displayServoInfo()
@@ -247,9 +247,28 @@ int displayServoInfo()
     printf("*****\n");
     line_count++;
 
-    //
-    console("position: [%f]*****", (float)position / 10000);
+    // 6軸位置命令與回饋
+    consolex("position: ");
+    for (int axis_idx = 0; axis_idx < 3; axis_idx++) //j1~j3
+    {
+        printf(" %d:[%+.2f](%+.2f)",
+               axis_idx,
+               (float)o_pdo[axis_idx]->TargetPosition / 10000,
+               (float)i_pdo[axis_idx]->ActualPosition / 10000);
+    }
+    printf("*****\n");
     line_count++;
+    consolex("position: ");
+    for (int axis_idx = 3; axis_idx < 6; axis_idx++) //j4~j6
+    {
+        printf(" %d:[%+.2f](%+.2f)",
+               axis_idx,
+               (float)o_pdo[axis_idx]->TargetPosition / 10000,
+               (float)i_pdo[axis_idx]->ActualPosition / 10000);
+    }
+    printf("*****\n");
+    line_count++;
+
     console("speed   : [%d]*****", speed);
     line_count++;
 
@@ -545,13 +564,20 @@ void *bgKeyboardDoWork(void *arg)
 
         // position
         case 'w':
-            position = 100 * 10000;
+            position[0] = 0;
+            position[1] = 0;
+            position[2] = -202*10000;
+            position[3] = 202*10000;
+            position[4] = -202*10000;
+            position[5] = 0;
             break;
         case 's':
-            position = 0;
-            break;
-        case 'x':
-            position = -100 * 10000;
+            position[0] = 0;
+            position[1] = 0;
+            position[2] = 0;
+            position[3] = 0;
+            position[4] = 0;
+            position[5] = 0;
             break;
 
         // speed
@@ -559,17 +585,26 @@ void *bgKeyboardDoWork(void *arg)
             speed += 10;
             if (speed > 1000)
                 speed = 1000;
-            drive_write32(ASDA_I3_E_AXIS_6, 0x6081, 0, speed * 10000);
+            for (int axis_id = ASDA_I3_E_AXIS_1; axis_id <= ASDA_I3_E_AXIS_6; axis_id++)
+            {
+                drive_write32(axis_id, 0x6081, 0, speed * 10000);
+            }
             break;
         case 'd':
             speed = 0;
-            drive_write32(ASDA_I3_E_AXIS_6, 0x6081, 0, speed * 10000);
+            for (int axis_id = ASDA_I3_E_AXIS_1; axis_id <= ASDA_I3_E_AXIS_6; axis_id++)
+            {
+                drive_write32(axis_id, 0x6081, 0, speed * 10000);
+            }
             break;
         case 'c':
             speed -= 10;
             if (speed < 0)
                 speed = 0;
-            drive_write32(ASDA_I3_E_AXIS_6, 0x6081, 0, speed * 10000);
+            for (int axis_id = ASDA_I3_E_AXIS_1; axis_id <= ASDA_I3_E_AXIS_6; axis_id++)
+            {
+                drive_write32(axis_id, 0x6081, 0, speed * 10000);
+            }
             break;
         case '3':
             
@@ -710,13 +745,15 @@ void *bgRealtimeDoWork(void *arg)
                         {
                             Delta_ASDA_I3_E_2nd_RxPDO_Mapping_t *optr;
 
-                            for (int axis_idx = ASDA_I3_E_AXIS_1; axis_idx <= ASDA_I3_E_AXIS_6; axis_idx++)
+                            for (int axis_id = ASDA_I3_E_AXIS_1, axis_idx = 0; axis_id <= ASDA_I3_E_AXIS_6; axis_id++, axis_idx++)
                             {
-                                optr = (Delta_ASDA_I3_E_2nd_RxPDO_Mapping_t *)ec_slave[axis_idx].outputs;
+                                optr = (Delta_ASDA_I3_E_2nd_RxPDO_Mapping_t *)ec_slave[axis_id].outputs;
                                 // int16 ControlWord = ctrl_word[16]
                                 optr->ControlWord = 0;
                                 for (int i = 0; i < 16; i++)
                                     optr->ControlWord |= (ctrl_word[i] ? 1 : 0) << i;
+
+                                optr->TargetPosition = position[axis_idx];
                             }
 
                             // EXEC_INTERVAL(50)
@@ -725,7 +762,6 @@ void *bgRealtimeDoWork(void *arg)
                             // }
                             // EXEC_INTERVAL_END
 
-                            optr->TargetPosition = position;
                         }
 
                         ec_send_processdata();
