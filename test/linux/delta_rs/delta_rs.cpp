@@ -645,7 +645,7 @@ void *bgRealtimeDoWork(void *arg)
                         // 計算用於測定rt能力的時間差距
                         int64_t dt = calcTimeDiffInNs(time_now, time_next_execution);
                         update_dt(dt);
-                        EXEC_INTERVAL(500)
+                        EXEC_INTERVAL(50)
                         {
                             Delta_ASDA_I3_E_2nd_TxPDO_Mapping_t *iptr = (Delta_ASDA_I3_E_2nd_TxPDO_Mapping_t *)ec_slave[ASDA_I3_E_AXIS_6].inputs;
                             Delta_ASDA_I3_E_2nd_RxPDO_Mapping_t *optr = (Delta_ASDA_I3_E_2nd_RxPDO_Mapping_t *)ec_slave[ASDA_I3_E_AXIS_6].outputs;

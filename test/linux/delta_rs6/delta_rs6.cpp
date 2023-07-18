@@ -192,7 +192,8 @@ int clamp(int number, int minValue, int maxValue)
     }
 }
 int position[6] = {0};
-int speed = 0;
+int position_record[4][6] = {0};
+int speed = 50;
 
 int displayServoInfo()
 {
@@ -249,21 +250,19 @@ int displayServoInfo()
 
     // 6軸位置命令與回饋
     consolex("position: ");
-    for (int axis_idx = 0; axis_idx < 3; axis_idx++) //j1~j3
+    for (int axis_idx = 0; axis_idx < 6; axis_idx++) //j1~j3
     {
-        printf(" %d:[%+.2f](%+.2f)",
+        printf(" %d:[%+8.2f]",
                axis_idx,
-               (float)o_pdo[axis_idx]->TargetPosition / 10000,
-               (float)i_pdo[axis_idx]->ActualPosition / 10000);
+               (float)o_pdo[axis_idx]->TargetPosition / 10000);
     }
     printf("*****\n");
     line_count++;
     consolex("position: ");
-    for (int axis_idx = 3; axis_idx < 6; axis_idx++) //j4~j6
+    for (int axis_idx = 0; axis_idx < 6; axis_idx++) //j4~j6
     {
-        printf(" %d:[%+.2f](%+.2f)",
-               axis_idx,
-               (float)o_pdo[axis_idx]->TargetPosition / 10000,
+        printf(" %d:(%+8.2f)",
+               axis_idx,            
                (float)i_pdo[axis_idx]->ActualPosition / 10000);
     }
     printf("*****\n");
@@ -541,6 +540,8 @@ void *bgKeyboardDoWork(void *arg)
             continue;
         }
 
+
+        const int jog = 10*10000;
         switch (ch)
         {
         case 'r':
@@ -580,6 +581,88 @@ void *bgKeyboardDoWork(void *arg)
             position[5] = 0;
             break;
 
+        // j1~j6 的 jog
+        case 'f':
+            position[0] += jog;
+            break;
+        case 'v':
+            position[0] -= jog;
+            break;
+        case 'g':
+            position[1] += jog;
+            break;
+        case 'b':
+            position[1] -= jog;
+            break;
+        case 'h':
+            position[2] += jog;
+            break;
+        case 'n':
+            position[2] -= jog;
+            break;
+        case 'j':
+            position[3] += jog;
+            break;
+        case 'm':
+            position[3] -= jog;
+            break;
+        case 'k':
+            position[4] += jog;
+            break;
+        case ',':
+            position[4] -= jog;
+            break;
+        case 'l':
+            position[5] += jog;
+            break;
+        case '.':
+            position[5] -= jog;
+            break;
+
+        // 記點
+        case '!':
+            for (int idx = 0; idx < 6; idx++)
+                position_record[0][idx] = position[idx];
+            break;
+        case '@':
+            for (int idx = 0; idx < 6; idx++)
+                position_record[1][idx] = position[idx];
+            break;
+        case '#':
+            for (int idx = 0; idx < 6; idx++)
+                position_record[2][idx] = position[idx];
+            break;
+        case '$':
+            for (int idx = 0; idx < 6; idx++)
+                position_record[3][idx] = position[idx];
+            break;
+
+        // 讀點
+        case '1':
+            for (int idx = 0; idx < 6; idx++)
+                position[idx] = position_record[0][idx];
+            request_trigger = true;
+
+            break;
+        case '2':
+            for (int idx = 0; idx < 6; idx++)
+                position[idx] = position_record[1][idx];
+            request_trigger = true;
+
+            break;
+        case '3':
+            for (int idx = 0; idx < 6; idx++)
+                position[idx] = position_record[2][idx];
+            request_trigger = true;
+
+            break;
+        case '4':
+            for (int idx = 0; idx < 6; idx++)
+                position[idx] = position_record[3][idx];
+            request_trigger = true;
+
+            break;
+
         // speed
         case 'e':
             speed += 10;
@@ -605,9 +688,6 @@ void *bgKeyboardDoWork(void *arg)
             {
                 drive_write32(axis_id, 0x6081, 0, speed * 10000);
             }
-            break;
-        case '3':
-            
             break;
             
         case ' ':
