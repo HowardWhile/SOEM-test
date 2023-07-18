@@ -5,6 +5,7 @@
 
 #include <termios.h> //keyboardPISOX中定义的标准接口
 
+#include "arc_ipc_tool.hpp"
 #include "arc_ec_tool.hpp"
 #include "arc_rt_tool.hpp"
 #include "arc_console.hpp"
@@ -17,7 +18,7 @@
 #define EC_TIMEOUTMON 500
 
 // Slave的站號
-#define ASDA_I3_E_AXIS_6 6
+#define ASDA_I3_E_AXIS_6 0
 
 // ----------------------------------------------------------------
 bool execExit = false; // 開始解建構程式
@@ -189,6 +190,7 @@ int wkc = 0;
 int expected_wkc = 0;
 bool inOP = false;
 int currentgroup = 0;
+Share_Memeber_t* share_memeber = NULL;
 
 int checkSlaveConfig(void)
 {
@@ -524,8 +526,22 @@ void *bgRealtimeDoWork(void *arg)
         setThreadNiceness(-20) == 0)      // 指定優先級NI -20
     {
         const int cycletime = PERIOD_NS;
-
         console("Starting RT task with dt=%u ns", cycletime);
+
+        // --------------------------------------
+        // 創建共享記憶體
+        // --------------------------------------
+        int shared_mem_id = createShareMem();
+        if (shared_mem_id != -1)
+        {
+            if(attachShareMem(shared_mem_id, &share_memeber) == 0)
+            {
+                console("create share memrory..." LIGHT_GREEN "succeeded" RESET);
+            }
+        }
+        // --------------------------------------
+        // --------------------------------------
+        // --------------------------------------
 
         if (ec_init(EC_CH_NAME)) // 初始化 EtherCAT 主站
         {
@@ -661,6 +677,14 @@ void *bgRealtimeDoWork(void *arg)
                             // debug hexdump
                             // dumpHex(ec_slave[ASDA_I3_E_AXIS_6].inputs, 32);
                             // dumpHex(ec_slave[ASDA_I3_E_AXIS_6].outputs, 32);
+                            if(share_memeber != NULL)
+                            {
+                                for(int idx = 0;idx < 6 ; idx++)
+                                {
+                                    share_memeber->ActualPosition[idx] += idx;
+                                }
+                            }
+
                         }
                         EXEC_INTERVAL_END
                         // ---------------------------------------------------
