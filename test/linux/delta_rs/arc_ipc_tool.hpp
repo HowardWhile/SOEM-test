@@ -14,9 +14,9 @@ typedef struct
     int16_t ActualTorque[6];   
 } Share_Memeber_t;
 
-static int inline createShareMem()
+static int inline createShareMem(key_t share_key)
 {
-    int shmId = shmget(IPC_PRIVATE, sizeof(Share_Memeber_t), IPC_CREAT | 0666);
+    int shmId = shmget(share_key, sizeof(Share_Memeber_t), IPC_CREAT | 0666);
     if (shmId == -1)
     {
         console("Failed to create shared memory");
@@ -25,9 +25,9 @@ static int inline createShareMem()
     return shmId;
 }
 
-static int inline getShareMem()
+static int inline getShareMem(key_t share_key)
 {
-    int shmId = shmget(IPC_PRIVATE, sizeof(Share_Memeber_t), 0666);
+    int shmId = shmget(share_key, sizeof(Share_Memeber_t), 0666);
     if (shmId == -1)
     {
         console("Failed to get shared memory");
@@ -45,6 +45,26 @@ static int inline attachShareMem(int id, Share_Memeber_t **o_mem)
         return -1;
     }
     *o_mem = mem;
+    return 0;
+}
+
+static int inline detachShareMem(Share_Memeber_t *mem)
+{
+    if (shmdt(mem) == -1)
+    {
+        console("Failed to detach shared memory");
+        return -1;
+    }
+    return 0;
+}
+
+static int inline removeShareMem(int share_mem_id)
+{
+    if (shmctl(share_mem_id, IPC_RMID, NULL) == -1)
+    {
+        console("Failed to remove shared memory");
+        return -1;
+    }
     return 0;
 }
 

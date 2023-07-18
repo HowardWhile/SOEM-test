@@ -531,7 +531,7 @@ void *bgRealtimeDoWork(void *arg)
         // --------------------------------------
         // 創建共享記憶體
         // --------------------------------------
-        int shared_mem_id = createShareMem();
+        int shared_mem_id = createShareMem(1234);
         if (shared_mem_id != -1)
         {
             if(attachShareMem(shared_mem_id, &share_memeber) == 0)
@@ -670,6 +670,18 @@ void *bgRealtimeDoWork(void *arg)
                             line_count += displayRealTimeInfo();
                             line_count += displayServoInfo(iptr, optr);
 
+                            if (share_memeber != NULL)
+                            {
+                                for (int i = 0; i < 6; ++i)
+                                    console("ActualPosition[%d]: %d", i, share_memeber->ActualPosition[i]);                                    
+                                line_count += 6;
+
+                                for (int idx = 0; idx < 6; idx++)
+                                {
+                                    share_memeber->ActualPosition[idx] += idx; //test
+                                }
+                            }
+
                             MOVEUP(line_count);
                             line_count = 0;
                             needlf = true;
@@ -677,13 +689,7 @@ void *bgRealtimeDoWork(void *arg)
                             // debug hexdump
                             // dumpHex(ec_slave[ASDA_I3_E_AXIS_6].inputs, 32);
                             // dumpHex(ec_slave[ASDA_I3_E_AXIS_6].outputs, 32);
-                            if(share_memeber != NULL)
-                            {
-                                for(int idx = 0;idx < 6 ; idx++)
-                                {
-                                    share_memeber->ActualPosition[idx] += idx;
-                                }
-                            }
+      
 
                         }
                         EXEC_INTERVAL_END
@@ -714,6 +720,13 @@ void *bgRealtimeDoWork(void *arg)
         else
         {
             console("ec_init on [%s] " RED "Failed." RESET, EC_CH_NAME);
+        }
+
+        if (share_memeber != NULL)
+        {
+            // deinit share memory
+            detachShareMem(share_memeber);
+            removeShareMem(shared_mem_id);
         }
     }
     else
