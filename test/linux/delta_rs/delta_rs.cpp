@@ -676,10 +676,16 @@ void *bgRealtimeDoWork(void *arg)
                                     console("ActualPosition[%d]: %d", i, share_memeber->ActualPosition[i]);                                    
                                 line_count += 6;
 
-                                for (int idx = 0; idx < 6; idx++)
-                                {
-                                    share_memeber->ActualPosition[idx] += idx; //test
-                                }
+                                // for (int idx = 0; idx < 6; idx++)
+                                // {
+                                //     share_memeber->ActualPosition[idx] += idx; //test
+                                // }
+                                share_memeber->ActualPosition[0] = 0;
+                                share_memeber->ActualPosition[1] = 0;
+                                share_memeber->ActualPosition[2] = -2025000;
+                                share_memeber->ActualPosition[3] = 2025000;
+                                share_memeber->ActualPosition[4] = -2025000;
+                                share_memeber->ActualPosition[5] = 0;
                             }
 
                             MOVEUP(line_count);
