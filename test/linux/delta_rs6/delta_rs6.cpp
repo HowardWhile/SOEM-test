@@ -7,6 +7,7 @@
 
 #include <vector>
 
+#include "arc_ipc_tool.hpp"
 #include "arc_ec_tool.hpp"
 #include "arc_rt_tool.hpp"
 #include "arc_console.hpp"
@@ -249,8 +250,8 @@ int displayServoInfo()
     line_count++;
 
     // 6軸位置命令與回饋
-    consolex("position: ");
-    for (int axis_idx = 0; axis_idx < 6; axis_idx++) //j1~j3
+    consolex("TargetPosition: ");
+    for (int axis_idx = 0; axis_idx < 6; axis_idx++)
     {
         printf(" %d:[%+8.2f]",
                axis_idx,
@@ -258,8 +259,8 @@ int displayServoInfo()
     }
     printf("*****\n");
     line_count++;
-    consolex("position: ");
-    for (int axis_idx = 0; axis_idx < 6; axis_idx++) //j4~j6
+    consolex("ActualPosition: ");
+    for (int axis_idx = 0; axis_idx < 6; axis_idx++) //
     {
         printf(" %d:(%+8.2f)",
                axis_idx,            
@@ -281,6 +282,7 @@ int wkc = 0;
 int expected_wkc = 0;
 bool inOP = false;
 int currentgroup = 0;
+Share_Memeber_t* share_memeber = NULL;
 
 int checkSlaveConfig(void)
 {
@@ -719,8 +721,19 @@ void *bgRealtimeDoWork(void *arg)
         setThreadNiceness(-20) == 0)      // 指定優先級NI -20
     {
         const int cycletime = PERIOD_NS;
-
         console("Starting RT task with dt=%u ns", cycletime);
+
+        // --------------------------------------
+        // 創建共享記憶體
+        // --------------------------------------
+        int shared_mem_id = createShareMem(1234);
+        if (shared_mem_id != -1)
+        {
+            if (attachShareMem(shared_mem_id, &share_memeber) == 0)
+            {
+                console("create share memrory..." LIGHT_GREEN "succeeded" RESET);
+            }
+        }
 
         if (ec_init(EC_CH_NAME)) // 初始化 EtherCAT 主站
         {
@@ -765,17 +778,27 @@ void *bgRealtimeDoWork(void *arg)
                         // -------------------------------------
                         // renew inputs
                         // -------------------------------------
-                        wkc = ec_receive_processdata(EC_TIMEOUTRET);                        
-                        
-                        // 更新6個關節模組的StatusWord
-                        for (int i = 0; i < 6; i++)
+                        wkc = ec_receive_processdata(EC_TIMEOUTRET);
+
+                        if (ec_slavecount >= ASDA_I3_E_AXIS_6)
                         {
-                            Delta_ASDA_I3_E_2nd_TxPDO_Mapping_t *iptr = (Delta_ASDA_I3_E_2nd_TxPDO_Mapping_t *)ec_slave[i+1].inputs;
-                            uint16_t sw = iptr->StatusWord;
-                            for (int j = 0; j < 16; j++)
+                            
+                            for (int i = 0; i < 6; i++)
                             {
-                                
-                                status_word[i][j] = (sw >> j) & 1;
+                                int slave_id = i + 1;
+                                Delta_ASDA_I3_E_2nd_TxPDO_Mapping_t *iptr = (Delta_ASDA_I3_E_2nd_TxPDO_Mapping_t *)ec_slave[slave_id].inputs;
+
+                                // 從關節模組讀回來的StatusWord刷新
+                                uint16_t sw = iptr->StatusWord;
+                                for (int j = 0; j < 16; j++)
+                                {
+                                    status_word[i][j] = (sw >> j) & 1;
+                                }
+
+                                // 從關節模組讀回來的feedback refresh
+                                share_memeber->ActualPosition[i] = iptr->ActualPosition;
+                                share_memeber->ActualVelocity[i] = iptr->ActualVelocity;
+                                share_memeber->ActualTorque[i] = iptr->ActualTorque;
                             }
                         }
 
@@ -853,12 +876,12 @@ void *bgRealtimeDoWork(void *arg)
                         update_dt(dt);
                         EXEC_INTERVAL(50)
                         {
-                            Delta_ASDA_I3_E_2nd_TxPDO_Mapping_t *iptr = (Delta_ASDA_I3_E_2nd_TxPDO_Mapping_t *)ec_slave[ASDA_I3_E_AXIS_6].inputs;
-                            Delta_ASDA_I3_E_2nd_RxPDO_Mapping_t *optr = (Delta_ASDA_I3_E_2nd_RxPDO_Mapping_t *)ec_slave[ASDA_I3_E_AXIS_6].outputs;
-
                             // 每段時間顯示一次訊息
                             line_count += displayRealTimeInfo();
-                            line_count += displayServoInfo();
+                            if (ec_slavecount >= ASDA_I3_E_AXIS_6)
+                            {
+                                line_count += displayServoInfo();
+                            }
 
                             MOVEUP(line_count);
                             line_count = 0;
@@ -896,6 +919,13 @@ void *bgRealtimeDoWork(void *arg)
         else
         {
             console("ec_init on [%s] " RED "Failed." RESET, EC_CH_NAME);
+        }
+
+        if (share_memeber != NULL)
+        {
+            // deinit share memory
+            detachShareMem(share_memeber);
+            removeShareMem(shared_mem_id);
         }
     }
     else
