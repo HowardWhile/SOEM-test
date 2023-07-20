@@ -190,7 +190,7 @@ int wkc = 0;
 int expected_wkc = 0;
 bool inOP = false;
 int currentgroup = 0;
-Share_Memeber_t* share_memeber = NULL;
+Share_Memeber_t* share_member = NULL;
 
 int checkSlaveConfig(void)
 {
@@ -534,7 +534,7 @@ void *bgRealtimeDoWork(void *arg)
         int shared_mem_id = createShareMem(1234);
         if (shared_mem_id != -1)
         {
-            if(attachShareMem(shared_mem_id, &share_memeber) == 0)
+            if(attachShareMem(shared_mem_id, &share_member) == 0)
             {
                 console("create share memrory..." LIGHT_GREEN "succeeded" RESET);
             }
@@ -670,22 +670,22 @@ void *bgRealtimeDoWork(void *arg)
                             line_count += displayRealTimeInfo();
                             line_count += displayServoInfo(iptr, optr);
 
-                            if (share_memeber != NULL)
+                            if (share_member != NULL)
                             {
                                 for (int i = 0; i < 6; ++i)
-                                    console("ActualPosition[%d]: %d", i, share_memeber->ActualPosition[i]);                                    
+                                    console("ActualPosition[%d]: %d", i, share_member->ActualPosition[i]);                                    
                                 line_count += 6;
 
                                 // for (int idx = 0; idx < 6; idx++)
                                 // {
                                 //     share_memeber->ActualPosition[idx] += idx; //test
                                 // }
-                                share_memeber->ActualPosition[0] = 0;
-                                share_memeber->ActualPosition[1] = 0;
-                                share_memeber->ActualPosition[2] = -2025000;
-                                share_memeber->ActualPosition[3] = 2025000;
-                                share_memeber->ActualPosition[4] = -2025000;
-                                share_memeber->ActualPosition[5] = 0;
+                                share_member->ActualPosition[0] = 0;
+                                share_member->ActualPosition[1] = 0;
+                                share_member->ActualPosition[2] = -2025000;
+                                share_member->ActualPosition[3] = 2025000;
+                                share_member->ActualPosition[4] = -2025000;
+                                share_member->ActualPosition[5] = 0;
                             }
 
                             MOVEUP(line_count);
@@ -728,10 +728,10 @@ void *bgRealtimeDoWork(void *arg)
             console("ec_init on [%s] " RED "Failed." RESET, EC_CH_NAME);
         }
 
-        if (share_memeber != NULL)
+        if (share_member != NULL)
         {
             // deinit share memory
-            detachShareMem(share_memeber);
+            detachShareMem(share_member);
             removeShareMem(shared_mem_id);
         }
     }

@@ -379,7 +379,7 @@ int wkc = 0;
 int expected_wkc = 0;
 bool inOP = false;
 int currentgroup = 0;
-Share_Memeber_t *share_memeber = NULL;
+Share_Memeber_t *share_member = NULL;
 
 int checkSlaveConfig(void)
 {
@@ -613,6 +613,196 @@ void setupTerminal()
     fcntl(STDIN_FILENO, F_SETFL, O_NONBLOCK);        // 將終端檔案描述符設置為非阻塞模式
 }
 
+void controlKey(char control_key)
+{
+    const int jog = 10 * 10000;
+    switch (control_key)
+    {
+    case 'r':
+        max_dt = LLONG_MIN;
+        min_dt = LLONG_MAX;
+        sum_dt = 0;
+        cyc_count = 0;
+        break;
+    case 'q':
+        MOVEDOWN(100); // 游標移到最後
+        execExit = 1;
+        break;
+
+    // servo
+    case 'o':
+        request_servo_on = true;
+        break;
+    case 'p':
+        request_servo_off = true;
+        break;
+
+    // position
+    case 'w':
+        position[0] = 0;
+        position[1] = 0;
+        position[2] = -202 * 10000;
+        position[3] = 202 * 10000;
+        position[4] = -202 * 10000;
+        position[5] = 0;
+        break;
+    case 's':
+        position[0] = 0;
+        position[1] = 0;
+        position[2] = 0;
+        position[3] = 0;
+        position[4] = 0;
+        position[5] = 0;
+        break;
+
+    // j1~j6 的 jog
+    case 'f':
+        position[0] += jog;
+        break;
+    case 'v':
+        position[0] -= jog;
+        break;
+    case 'g':
+        position[1] += jog;
+        break;
+    case 'b':
+        position[1] -= jog;
+        break;
+    case 'h':
+        position[2] += jog;
+        break;
+    case 'n':
+        position[2] -= jog;
+        break;
+    case 'j':
+        position[3] += jog;
+        break;
+    case 'm':
+        position[3] -= jog;
+        break;
+    case 'k':
+        position[4] += jog;
+        break;
+    case ',':
+        position[4] -= jog;
+        break;
+    case 'l':
+        position[5] += jog;
+        break;
+    case '.':
+        position[5] -= jog;
+        break;
+
+    // 記點
+    case '~':
+        initPositionRecord();
+        break;
+    case '!':
+        for (int idx = 0; idx < 6; idx++)
+            position_record[0][idx] = position[idx];
+        break;
+    case '@':
+        for (int idx = 0; idx < 6; idx++)
+            position_record[1][idx] = position[idx];
+        break;
+    case '#':
+        for (int idx = 0; idx < 6; idx++)
+            position_record[2][idx] = position[idx];
+        break;
+    case '$':
+        for (int idx = 0; idx < 6; idx++)
+            position_record[3][idx] = position[idx];
+        break;
+
+    // 讀點
+    case '1':
+        for (int idx = 0; idx < 6; idx++)
+            position[idx] = position_record[0][idx];
+        requsetTrigger();
+        break;
+
+    case '2':
+        for (int idx = 0; idx < 6; idx++)
+            position[idx] = position_record[1][idx];
+        requsetTrigger();
+        break;
+
+    case '3':
+        for (int idx = 0; idx < 6; idx++)
+            position[idx] = position_record[2][idx];
+        requsetTrigger();
+        break;
+
+    case '4':
+        for (int idx = 0; idx < 6; idx++)
+            position[idx] = position_record[3][idx];
+        requsetTrigger();
+        break;
+
+    case '0':
+        enable_loop_position = !enable_loop_position;
+        break;
+
+    // 固定 speed
+    case 'e':
+        speed += 10;
+        if (speed > 1000)
+            speed = 1000;
+        for (int axis_id = ASDA_I3_E_AXIS_1; axis_id <= ASDA_I3_E_AXIS_6; axis_id++)
+        {
+            drive_write32(axis_id, 0x6081, 0, speed * 10000);
+        }
+        enable_dynamic_speed = false;
+        break;
+    case 'd':
+        enable_dynamic_speed = false;
+        speed = 10;
+        for (int axis_id = ASDA_I3_E_AXIS_1; axis_id <= ASDA_I3_E_AXIS_6; axis_id++)
+        {
+            drive_write32(axis_id, 0x6081, 0, speed * 10000);
+        }
+        break;
+    case 'c':
+        enable_dynamic_speed = false;
+        speed -= 10;
+        if (speed < 0)
+            speed = 0;
+        for (int axis_id = ASDA_I3_E_AXIS_1; axis_id <= ASDA_I3_E_AXIS_6; axis_id++)
+        {
+            drive_write32(axis_id, 0x6081, 0, speed * 10000);
+        }
+        break;
+
+    // 固定移動時間
+    case 'E':
+        enable_dynamic_speed = true;
+        motion_duration += 0.5;
+        motion_duration = clamp64f(motion_duration, 0.5, 10);
+        updateDynamicSpeed();
+        break;
+
+    case 'D':
+        enable_dynamic_speed = true;
+        motion_duration = 5.0;
+        updateDynamicSpeed();
+        break;
+
+    case 'C':
+        enable_dynamic_speed = true;
+        motion_duration -= 0.5;
+        motion_duration = clamp64f(motion_duration, 0.5, 10);
+        updateDynamicSpeed();
+        break;
+
+    case ' ':
+        requsetTrigger();
+        break;
+
+    default:
+        break;
+    }
+}
+
 void *bgKeyboardDoWork(void *arg)
 {
     console("bgKeyboardDoWork start, " LIGHT_GREEN "Thread ID: %d" RESET, getThreadID());
@@ -641,192 +831,7 @@ void *bgKeyboardDoWork(void *arg)
             continue;
         }
 
-        const int jog = 10 * 10000;
-        switch (ch)
-        {
-        case 'r':
-            max_dt = LLONG_MIN;
-            min_dt = LLONG_MAX;
-            sum_dt = 0;
-            cyc_count = 0;
-            break;
-        case 'q':
-            MOVEDOWN(100); // 游標移到最後
-            execExit = 1;
-            break;
-
-        // servo
-        case 'o':
-            request_servo_on = true;
-            break;
-        case 'p':
-            request_servo_off = true;
-            break;
-
-        // position
-        case 'w':
-            position[0] = 0;
-            position[1] = 0;
-            position[2] = -202 * 10000;
-            position[3] = 202 * 10000;
-            position[4] = -202 * 10000;
-            position[5] = 0;
-            break;
-        case 's':
-            position[0] = 0;
-            position[1] = 0;
-            position[2] = 0;
-            position[3] = 0;
-            position[4] = 0;
-            position[5] = 0;
-            break;
-
-        // j1~j6 的 jog
-        case 'f':
-            position[0] += jog;
-            break;
-        case 'v':
-            position[0] -= jog;
-            break;
-        case 'g':
-            position[1] += jog;
-            break;
-        case 'b':
-            position[1] -= jog;
-            break;
-        case 'h':
-            position[2] += jog;
-            break;
-        case 'n':
-            position[2] -= jog;
-            break;
-        case 'j':
-            position[3] += jog;
-            break;
-        case 'm':
-            position[3] -= jog;
-            break;
-        case 'k':
-            position[4] += jog;
-            break;
-        case ',':
-            position[4] -= jog;
-            break;
-        case 'l':
-            position[5] += jog;
-            break;
-        case '.':
-            position[5] -= jog;
-            break;
-
-        // 記點
-        case '~':
-            initPositionRecord();
-            break;
-        case '!':
-            for (int idx = 0; idx < 6; idx++)
-                position_record[0][idx] = position[idx];
-            break;
-        case '@':
-            for (int idx = 0; idx < 6; idx++)
-                position_record[1][idx] = position[idx];
-            break;
-        case '#':
-            for (int idx = 0; idx < 6; idx++)
-                position_record[2][idx] = position[idx];
-            break;
-        case '$':
-            for (int idx = 0; idx < 6; idx++)
-                position_record[3][idx] = position[idx];
-            break;
-
-        // 讀點
-        case '1':
-            for (int idx = 0; idx < 6; idx++)
-                position[idx] = position_record[0][idx];
-            requsetTrigger();
-            break;
-
-        case '2':
-            for (int idx = 0; idx < 6; idx++)
-                position[idx] = position_record[1][idx];
-            requsetTrigger();
-            break;
-
-        case '3':
-            for (int idx = 0; idx < 6; idx++)
-                position[idx] = position_record[2][idx];
-            requsetTrigger();
-            break;
-
-        case '4':
-            for (int idx = 0; idx < 6; idx++)
-                position[idx] = position_record[3][idx];
-            requsetTrigger();
-            break;
-
-        case '0':
-            enable_loop_position = !enable_loop_position;
-            break;
-
-        // 固定 speed
-        case 'e':
-            speed += 10;
-            if (speed > 1000)
-                speed = 1000;
-            for (int axis_id = ASDA_I3_E_AXIS_1; axis_id <= ASDA_I3_E_AXIS_6; axis_id++)
-            {
-                drive_write32(axis_id, 0x6081, 0, speed * 10000);
-            }
-            enable_dynamic_speed = false;
-            break;
-        case 'd':
-            enable_dynamic_speed = false;
-            speed = 10;
-            for (int axis_id = ASDA_I3_E_AXIS_1; axis_id <= ASDA_I3_E_AXIS_6; axis_id++)
-            {
-                drive_write32(axis_id, 0x6081, 0, speed * 10000);
-            }
-            break;
-        case 'c':
-            enable_dynamic_speed = false;
-            speed -= 10;
-            if (speed < 0)
-                speed = 0;
-            for (int axis_id = ASDA_I3_E_AXIS_1; axis_id <= ASDA_I3_E_AXIS_6; axis_id++)
-            {
-                drive_write32(axis_id, 0x6081, 0, speed * 10000);
-            }
-            break;
-
-        // 固定移動時間
-        case 'E':
-            enable_dynamic_speed = true;
-            motion_duration += 0.5;
-            motion_duration = clamp64f(motion_duration, 0.5, 10);
-            updateDynamicSpeed();
-            break;
-
-        case 'D':
-            enable_dynamic_speed = true;
-            motion_duration = 5.0;
-            updateDynamicSpeed();
-            break;
-
-        case 'C':
-            enable_dynamic_speed = true;
-            motion_duration -= 0.5;
-            motion_duration = clamp64f(motion_duration, 0.5, 10);
-            updateDynamicSpeed();
-            break;
-
-        case ' ':
-            requsetTrigger();
-            break;
-
-        default:
-            break;
-        }
+        controlKey(ch);        
     }
 
     tcsetattr(0, TCSANOW, &stored_settings); // 還原設定
@@ -857,9 +862,11 @@ void *bgRealtimeDoWork(void *arg)
         int shared_mem_id = createShareMem(1234);
         if (shared_mem_id != -1)
         {
-            if (attachShareMem(shared_mem_id, &share_memeber) == 0)
+            if (attachShareMem(shared_mem_id, &share_member) == 0)
             {
                 console("create share memrory..." LIGHT_GREEN "succeeded" RESET);
+                share_member->control_key = 0;
+                share_member->control_update_time_ms = 0;
             }
         }
 
@@ -925,9 +932,11 @@ void *bgRealtimeDoWork(void *arg)
 
                                 // 從關節模組讀回來的feedback refresh
                                 actual_position[i] = iptr->ActualPosition;
-                                share_memeber->ActualPosition[i] = iptr->ActualPosition;
-                                share_memeber->ActualVelocity[i] = iptr->ActualVelocity;
-                                share_memeber->ActualTorque[i] = iptr->ActualTorque;
+                                share_member->feedback_update_time_ns = time_now.tv_nsec;
+                                share_member->feedback_update_time_s = time_now.tv_sec;                                
+                                share_member->ActualPosition[i] = iptr->ActualPosition;
+                                share_member->ActualVelocity[i] = iptr->ActualVelocity;
+                                share_member->ActualTorque[i] = iptr->ActualTorque;
                             }
                         }
 
@@ -1049,10 +1058,10 @@ void *bgRealtimeDoWork(void *arg)
             console("ec_init on [%s] " RED "Failed." RESET, EC_CH_NAME);
         }
 
-        if (share_memeber != NULL)
+        if (share_member != NULL)
         {
             // deinit share memory
-            detachShareMem(share_memeber);
+            detachShareMem(share_member);
             removeShareMem(shared_mem_id);
         }
     }
@@ -1081,14 +1090,17 @@ int main()
     usleep(1000);
     pthread_create(&bg_rt, NULL, bgRealtimeDoWork, NULL); // RT執行序
 
+
     // ----------------------------------------------------------------
-    // 跑點動作
     // ----------------------------------------------------------------
     int step = 0;
     int64_t delay_start_time = 0;
     while (!execExit)
     {
 
+        // ----------------------------------------------------------------
+        // 跑點動作
+        // ----------------------------------------------------------------
         if (enable_loop_position == true &&
             checkStatusWord(2) == true // 確認servo on
         )
@@ -1135,6 +1147,20 @@ int main()
             step = 0;
             loop_position_id = 0;
             enable_loop_position = false;
+        }
+
+        // ----------------------------------------------------------------
+        // 來自share memory的控制
+        // ----------------------------------------------------------------
+        if (share_member != NULL)
+        {    
+            static int64_t check_time = 0;
+            if(check_time != share_member->control_update_time_ms)
+            {
+                check_time = share_member->control_update_time_ms;
+                char key = share_member->control_key;
+                controlKey(key);
+            }
         }
 
         usleep(50000);
