@@ -197,11 +197,13 @@ double clamp64f(double number, double minValue, double maxValue)
 
 int position[6] = {0};
 int actual_position[6] = {0};
-int position_record[4][6] = {0};
+int position_record[4][6] = {0}; // 記點
 int speed = 50;
 bool enable_dynamic_speed = true;
 int dynamic_speed[6] = {0};
 double motion_duration = 5.0; // seconds
+bool enable_loop_position = false;
+int loop_position_id = 0;
 
 void initPositionRecord()
 {
@@ -354,6 +356,16 @@ int displayServoInfo()
     else
     {
         console("speed   : [%d]*****", speed);
+    }
+    line_count++;
+
+    if (enable_loop_position)
+    {
+        console("Loop Postion " RED "ENABLE" RESET " position id: %d     ", loop_position_id);
+    }
+    else
+    {
+        console("Loop Postion DISABLE              ");
     }
     line_count++;
 
@@ -733,25 +745,28 @@ void *bgKeyboardDoWork(void *arg)
             for (int idx = 0; idx < 6; idx++)
                 position[idx] = position_record[0][idx];
             requsetTrigger();
-
             break;
+
         case '2':
             for (int idx = 0; idx < 6; idx++)
                 position[idx] = position_record[1][idx];
             requsetTrigger();
-
             break;
+
         case '3':
             for (int idx = 0; idx < 6; idx++)
                 position[idx] = position_record[2][idx];
             requsetTrigger();
-
             break;
+
         case '4':
             for (int idx = 0; idx < 6; idx++)
                 position[idx] = position_record[3][idx];
             requsetTrigger();
+            break;
 
+        case '0':
+            enable_loop_position = !enable_loop_position;
             break;
 
         // 固定 speed
@@ -1050,19 +1065,82 @@ void *bgRealtimeDoWork(void *arg)
     execExit = true;
     return NULL;
 }
+
+// ----------------------------------------------------------------
 // ----------------------------------------------------------------
 // ----------------------------------------------------------------
 
 int main()
 {
     console("delta_rs6 SOEM (Simple Open EtherCAT Master) Start... " LIGHT_GREEN "Process ID: %d" RESET, getProcessID());
-    pthread_t bg_keyboard, bg_rt, bg_ecatcheck;
+    pthread_t bg_keyboard, bg_rt, bg_ecatcheck, bg_motion;
 
     pthread_create(&bg_keyboard, NULL, bgKeyboardDoWork, NULL); // 鍵盤輸入執行序
     usleep(1000);
     pthread_create(&bg_ecatcheck, NULL, bgEcatCheckDoWork, NULL); // EC狀態檢查執行序
     usleep(1000);
     pthread_create(&bg_rt, NULL, bgRealtimeDoWork, NULL); // RT執行序
+
+    // ----------------------------------------------------------------
+    // 跑點動作
+    // ----------------------------------------------------------------
+    int step = 0;
+    int64_t delay_start_time = 0;
+    while (!execExit)
+    {
+
+        if (enable_loop_position == true &&
+            checkStatusWord(2) == true // 確認servo on
+        )
+        {
+            switch (step)
+            {
+            case 0: // 跑點
+                for (int idx = 0; idx < 6; idx++)
+                    position[idx] = position_record[loop_position_id][idx];
+
+                requsetTrigger();
+                step++;
+                break;
+
+            case 1:                      // 檢查到位
+                if (checkStatusWord(10)) // status word bit10 = Target reached
+                {
+                    step++;
+                }
+                break;
+
+            case 2: // delay start
+                delay_start_time = clock_ms();
+                step++;
+                break;
+
+            case 3: // delay complete
+                if (clock_ms() - delay_start_time >= 300)
+                {
+                    loop_position_id++;        // 下個點位
+                    if (loop_position_id >= 4) // 只有4個點位
+                        loop_position_id = 0;
+                    step++;
+                }
+                break;
+
+            default:
+                step = 0;
+                break;
+            }
+        }
+        else
+        {
+            step = 0;
+            loop_position_id = 0;
+            enable_loop_position = false;
+        }
+
+        usleep(50000);
+    }
+    // ----------------------------------------------------------------
+    // ----------------------------------------------------------------
 
     // 等待執行緒結束
     pthread_join(bg_rt, NULL);
