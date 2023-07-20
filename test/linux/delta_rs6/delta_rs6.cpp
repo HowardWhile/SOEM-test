@@ -142,9 +142,9 @@ int servo_on_work()
 bool request_trigger = false;
 int servo_pp_trigger()
 {
-    //ref:
-    // ASDA-A3.pdf 13-62(p915)
-    // ASDA-A3.pdf (p880)
+    // ref:
+    //  ASDA-A3.pdf 13-62(p915)
+    //  ASDA-A3.pdf (p880)
     static int step = 0;
     switch (step)
     {
@@ -155,21 +155,23 @@ int servo_pp_trigger()
         break;
 
     case 1:
-    
         if (status_word[5][12] == false) // 確認伺服收到命令訊號位元RST
             step++;
         break;
+
     case 2:
         ctrl_word[4] = true; // 觸發命令
         step++;
         break;
+
     case 3:
         if (status_word[5][12] == true) // 確認伺服收到命令訊號
         {
-            ctrl_word[4] = false;    // RST 觸發命令
+            ctrl_word[4] = false; // RST 觸發命令
             step++;
         }
         break;
+
     default:
         step = 0;
         return 0;
@@ -177,7 +179,7 @@ int servo_pp_trigger()
     return step;
 }
 
-int clamp(int number, int minValue, int maxValue)
+double clamp64f(double number, double minValue, double maxValue)
 {
     if (number < minValue)
     {
@@ -192,21 +194,80 @@ int clamp(int number, int minValue, int maxValue)
         return number;
     }
 }
+
 int position[6] = {0};
+int actual_position[6] = {0};
 int position_record[4][6] = {0};
 int speed = 50;
+bool enable_dynamic_speed = true;
+int dynamic_speed[6] = {0};
+double motion_duration = 5.0; // seconds
+
+void initPositionRecord()
+{
+    position_record[0][0] = 0 * 10000;
+    position_record[0][1] = 0 * 10000;
+    position_record[0][2] = -202.5 * 10000;
+    position_record[0][3] = 202.5 * 10000;
+    position_record[0][4] = -202.5 * 10000;
+    position_record[0][5] = 0 * 10000;
+
+    position_record[1][0] = 0 * 10000;
+    position_record[1][1] = 0 * 10000;
+    position_record[1][2] = 0 * 10000;
+    position_record[1][3] = 0 * 10000;
+    position_record[1][4] = 0 * 10000;
+    position_record[1][5] = 0 * 10000;
+
+    position_record[2][0] = -605 * 10000;
+    position_record[2][1] = 0 * 10000;
+    position_record[2][2] = -405 * 10000;
+    position_record[2][3] = 405 * 10000;
+    position_record[2][4] = -405 * 10000;
+    position_record[2][5] = 0 * 10000;
+
+    position_record[3][0] = -605 * 10000;
+    position_record[3][1] = 0 * 10000;
+    position_record[3][2] = -202.5 * 10000;
+    position_record[3][3] = 202.5 * 10000;
+    position_record[3][4] = 202.5 * 10000;
+    position_record[3][5] = 0 * 10000;
+}
+
+void updateDynamicSpeed()
+{
+    for (int idx = 0; idx < 6; idx++)
+    {
+        int delta = abs(position[idx] - actual_position[idx]);
+        double speed = (double)delta / motion_duration;
+        speed = clamp64f(speed, 100, 1000 * 10000); // 限制最大最小速度
+        dynamic_speed[idx] = speed;
+    }
+
+    for (int axis_id = ASDA_I3_E_AXIS_1; axis_id <= ASDA_I3_E_AXIS_6; axis_id++)
+    {
+        drive_write32(axis_id, 0x6081, 0, dynamic_speed[axis_id - 1]);
+    }
+}
+
+void requsetTrigger()
+{
+    if (enable_dynamic_speed == true)
+        updateDynamicSpeed();
+    request_trigger = true;
+}
 
 int displayServoInfo()
 {
-    
+
     Delta_ASDA_I3_E_2nd_TxPDO_Mapping_t *i_pdo[6];
     i_pdo[0] = (Delta_ASDA_I3_E_2nd_TxPDO_Mapping_t *)ec_slave[ASDA_I3_E_AXIS_1].inputs;
     i_pdo[1] = (Delta_ASDA_I3_E_2nd_TxPDO_Mapping_t *)ec_slave[ASDA_I3_E_AXIS_2].inputs;
     i_pdo[2] = (Delta_ASDA_I3_E_2nd_TxPDO_Mapping_t *)ec_slave[ASDA_I3_E_AXIS_3].inputs;
     i_pdo[3] = (Delta_ASDA_I3_E_2nd_TxPDO_Mapping_t *)ec_slave[ASDA_I3_E_AXIS_4].inputs;
     i_pdo[4] = (Delta_ASDA_I3_E_2nd_TxPDO_Mapping_t *)ec_slave[ASDA_I3_E_AXIS_5].inputs;
-    i_pdo[5] = (Delta_ASDA_I3_E_2nd_TxPDO_Mapping_t *)ec_slave[ASDA_I3_E_AXIS_6].inputs;    
-    
+    i_pdo[5] = (Delta_ASDA_I3_E_2nd_TxPDO_Mapping_t *)ec_slave[ASDA_I3_E_AXIS_6].inputs;
+
     Delta_ASDA_I3_E_2nd_RxPDO_Mapping_t *o_pdo[6];
     o_pdo[0] = (Delta_ASDA_I3_E_2nd_RxPDO_Mapping_t *)ec_slave[ASDA_I3_E_AXIS_1].outputs;
     o_pdo[1] = (Delta_ASDA_I3_E_2nd_RxPDO_Mapping_t *)ec_slave[ASDA_I3_E_AXIS_2].outputs;
@@ -225,13 +286,23 @@ int displayServoInfo()
     printf("*****\n");
     line_count++;
 
-
     // 顯示servo on的狀態
     int axis_count;
     axis_count = 0;
-    consolex("servo on: [%d]", ctrl_word[3]); // control word bit3 = Enable operation
+    consolex("servo on: [%d]", ctrl_word[3]);   // control word bit3 = Enable operation
     auto operation_enabled = getStatusWords(2); // status word bit2 = operation enabled
-    for (bool b : operation_enabled) 
+    for (bool b : operation_enabled)
+    {
+        printf(" %d:%d", axis_count++, b);
+    }
+    printf("*****\n");
+    line_count++;
+
+    // 顯示到位訊號
+    axis_count = 0;
+    consolex("reached : [%d]", checkStatusWord(10)); // status word bit10 = Target reached
+    auto target_reached = getStatusWords(10);
+    for (bool b : target_reached)
     {
         printf(" %d:%d", axis_count++, b);
     }
@@ -239,10 +310,10 @@ int displayServoInfo()
     line_count++;
 
     // 異常訊號
-    consolex("Fault:" ); 
+    consolex("Fault:");
     auto fault = getStatusWords(3); // status word bit3 = 異常訊號
     axis_count = 0;
-    for (bool b : fault) 
+    for (bool b : fault)
     {
         printf(" %d:%d", axis_count++, b);
     }
@@ -263,13 +334,27 @@ int displayServoInfo()
     for (int axis_idx = 0; axis_idx < 6; axis_idx++) //
     {
         printf(" %d:(%+8.2f)",
-               axis_idx,            
+               axis_idx,
                (float)i_pdo[axis_idx]->ActualPosition / 10000);
     }
     printf("*****\n");
     line_count++;
 
-    console("speed   : [%d]*****", speed);
+    if (enable_dynamic_speed)
+    {
+        consolex("Duration %4.1f(sec):", motion_duration);
+        for (int axis_idx = 0; axis_idx < 6; axis_idx++) //
+        {
+            printf(" %d:(%+8.2f)",
+                   axis_idx,
+                   (float)dynamic_speed[axis_idx] / 10000);
+        }
+        printf("*****\n");
+    }
+    else
+    {
+        console("speed   : [%d]*****", speed);
+    }
     line_count++;
 
     return line_count;
@@ -282,7 +367,7 @@ int wkc = 0;
 int expected_wkc = 0;
 bool inOP = false;
 int currentgroup = 0;
-Share_Memeber_t* share_memeber = NULL;
+Share_Memeber_t *share_memeber = NULL;
 
 int checkSlaveConfig(void)
 {
@@ -311,7 +396,6 @@ int checkSlaveConfig(void)
         }
     }
 
-    
     ec_slave[ASDA_I3_E_AXIS_1].PO2SOconfig = setupDelta_ASDA_I3_E;
     ec_slave[ASDA_I3_E_AXIS_2].PO2SOconfig = setupDelta_ASDA_I3_E;
     ec_slave[ASDA_I3_E_AXIS_3].PO2SOconfig = setupDelta_ASDA_I3_E;
@@ -521,6 +605,9 @@ void *bgKeyboardDoWork(void *arg)
 {
     console("bgKeyboardDoWork start, " LIGHT_GREEN "Thread ID: %d" RESET, getThreadID());
 
+    // 初始
+    initPositionRecord();
+
     // 攔截ctrl+c事件
     signal(SIGINT, handleCtrlC);
 
@@ -542,8 +629,7 @@ void *bgKeyboardDoWork(void *arg)
             continue;
         }
 
-
-        const int jog = 10*10000;
+        const int jog = 10 * 10000;
         switch (ch)
         {
         case 'r':
@@ -569,9 +655,9 @@ void *bgKeyboardDoWork(void *arg)
         case 'w':
             position[0] = 0;
             position[1] = 0;
-            position[2] = -202*10000;
-            position[3] = 202*10000;
-            position[4] = -202*10000;
+            position[2] = -202 * 10000;
+            position[3] = 202 * 10000;
+            position[4] = -202 * 10000;
             position[5] = 0;
             break;
         case 's':
@@ -623,33 +709,7 @@ void *bgKeyboardDoWork(void *arg)
 
         // 記點
         case '~':
-            position_record[0][0] = 0*10000;
-            position_record[0][1] = 0*10000;
-            position_record[0][2] = -202.5*10000;
-            position_record[0][3] = 202.5*10000;
-            position_record[0][4] = -202.5*10000;
-            position_record[0][5] = 0*10000;
-
-            position_record[1][0] = 0*10000;
-            position_record[1][1] = 0*10000;
-            position_record[1][2] = 0*10000;
-            position_record[1][3] = 0*10000;
-            position_record[1][4] = 0*10000;
-            position_record[1][5] = 0*10000;
-
-            position_record[2][0] = -605*10000;
-            position_record[2][1] = 0*10000;
-            position_record[2][2] = -405*10000;
-            position_record[2][3] = 405*10000;
-            position_record[2][4] = -405*10000;
-            position_record[2][5] = 0*10000;
-
-            position_record[3][0] = -605*10000;
-            position_record[3][1] = 0*10000;
-            position_record[3][2] = -202.5*10000;
-            position_record[3][3] = 202.5*10000;
-            position_record[3][4] = 202.5*10000;
-            position_record[3][5] = 0*10000;
+            initPositionRecord();
             break;
         case '!':
             for (int idx = 0; idx < 6; idx++)
@@ -672,29 +732,29 @@ void *bgKeyboardDoWork(void *arg)
         case '1':
             for (int idx = 0; idx < 6; idx++)
                 position[idx] = position_record[0][idx];
-            request_trigger = true;
+            requsetTrigger();
 
             break;
         case '2':
             for (int idx = 0; idx < 6; idx++)
                 position[idx] = position_record[1][idx];
-            request_trigger = true;
+            requsetTrigger();
 
             break;
         case '3':
             for (int idx = 0; idx < 6; idx++)
                 position[idx] = position_record[2][idx];
-            request_trigger = true;
+            requsetTrigger();
 
             break;
         case '4':
             for (int idx = 0; idx < 6; idx++)
                 position[idx] = position_record[3][idx];
-            request_trigger = true;
+            requsetTrigger();
 
             break;
 
-        // speed
+        // 固定 speed
         case 'e':
             speed += 10;
             if (speed > 1000)
@@ -703,15 +763,18 @@ void *bgKeyboardDoWork(void *arg)
             {
                 drive_write32(axis_id, 0x6081, 0, speed * 10000);
             }
+            enable_dynamic_speed = false;
             break;
         case 'd':
-            speed = 0;
+            enable_dynamic_speed = false;
+            speed = 10;
             for (int axis_id = ASDA_I3_E_AXIS_1; axis_id <= ASDA_I3_E_AXIS_6; axis_id++)
             {
                 drive_write32(axis_id, 0x6081, 0, speed * 10000);
             }
             break;
         case 'c':
+            enable_dynamic_speed = false;
             speed -= 10;
             if (speed < 0)
                 speed = 0;
@@ -720,9 +783,30 @@ void *bgKeyboardDoWork(void *arg)
                 drive_write32(axis_id, 0x6081, 0, speed * 10000);
             }
             break;
-            
+
+        // 固定移動時間
+        case 'E':
+            enable_dynamic_speed = true;
+            motion_duration += 0.5;
+            motion_duration = clamp64f(motion_duration, 0.5, 10);
+            updateDynamicSpeed();
+            break;
+
+        case 'D':
+            enable_dynamic_speed = true;
+            motion_duration = 5.0;
+            updateDynamicSpeed();
+            break;
+
+        case 'C':
+            enable_dynamic_speed = true;
+            motion_duration -= 0.5;
+            motion_duration = clamp64f(motion_duration, 0.5, 10);
+            updateDynamicSpeed();
+            break;
+
         case ' ':
-            request_trigger = true;
+            requsetTrigger();
             break;
 
         default:
@@ -811,7 +895,7 @@ void *bgRealtimeDoWork(void *arg)
 
                         if (ec_slavecount >= ASDA_I3_E_AXIS_6)
                         {
-                            
+
                             for (int i = 0; i < 6; i++)
                             {
                                 int slave_id = i + 1;
@@ -825,6 +909,7 @@ void *bgRealtimeDoWork(void *arg)
                                 }
 
                                 // 從關節模組讀回來的feedback refresh
+                                actual_position[i] = iptr->ActualPosition;
                                 share_memeber->ActualPosition[i] = iptr->ActualPosition;
                                 share_memeber->ActualVelocity[i] = iptr->ActualVelocity;
                                 share_memeber->ActualTorque[i] = iptr->ActualTorque;
@@ -893,7 +978,6 @@ void *bgRealtimeDoWork(void *arg)
                             //     printBinary16(optr->ControlWord);
                             // }
                             // EXEC_INTERVAL_END
-
                         }
 
                         ec_send_processdata();
