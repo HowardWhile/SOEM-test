@@ -622,6 +622,35 @@ void *bgKeyboardDoWork(void *arg)
             break;
 
         // 記點
+        case '~':
+            position_record[0][0] = 0*10000;
+            position_record[0][1] = 0*10000;
+            position_record[0][2] = -202.5*10000;
+            position_record[0][3] = 202.5*10000;
+            position_record[0][4] = -202.5*10000;
+            position_record[0][5] = 0*10000;
+
+            position_record[1][0] = 0*10000;
+            position_record[1][1] = 0*10000;
+            position_record[1][2] = 0*10000;
+            position_record[1][3] = 0*10000;
+            position_record[1][4] = 0*10000;
+            position_record[1][5] = 0*10000;
+
+            position_record[2][0] = -605*10000;
+            position_record[2][1] = 0*10000;
+            position_record[2][2] = -405*10000;
+            position_record[2][3] = 405*10000;
+            position_record[2][4] = -405*10000;
+            position_record[2][5] = 0*10000;
+
+            position_record[3][0] = -605*10000;
+            position_record[3][1] = 0*10000;
+            position_record[3][2] = -202.5*10000;
+            position_record[3][3] = 202.5*10000;
+            position_record[3][4] = 202.5*10000;
+            position_record[3][5] = 0*10000;
+            break;
         case '!':
             for (int idx = 0; idx < 6; idx++)
                 position_record[0][idx] = position[idx];
