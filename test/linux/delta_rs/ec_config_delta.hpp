@@ -37,7 +37,7 @@ typedef struct PACKED
 typedef struct PACKED
 {
 
-}Delta_ASDA_I3_E_1st_RxPDO_Mapping_t; // 0x1600
+} Delta_ASDA_I3_E_1st_RxPDO_Mapping_t; // 0x1600
 typedef struct PACKED
 {
     uint16_t ControlWord;        // 0x6040
@@ -45,17 +45,17 @@ typedef struct PACKED
     int32_t TargetVelocity;      // 0x60FF
     int16_t TargetTorque;        // 0x6071
     uint16_t TouchProbeFunction; // 0x60B8
+    int32_t ProfileVelocity;     // 0x6081
 
 } Delta_ASDA_I3_E_2nd_RxPDO_Mapping_t; // 0x1601
 typedef struct PACKED
 {
 
-}Delta_ASDA_I3_E_3rd_RxPDO_Mapping_t;// 0x1602
+} Delta_ASDA_I3_E_3rd_RxPDO_Mapping_t; // 0x1602
 typedef struct PACKED
 {
 
-}Delta_ASDA_I3_E_4th_RxPDO_Mapping_t;// 0x1603
-
+} Delta_ASDA_I3_E_4th_RxPDO_Mapping_t; // 0x1603
 
 static int setupDelta_ASDA_I3_E(uint16 slave)
 {
@@ -129,8 +129,9 @@ static int setupDelta_ASDA_I3_E(uint16 slave)
     wkc += drive_write32(slave, 0x1601, 3, 0x60ff0020); // Target velocity
     wkc += drive_write32(slave, 0x1601, 4, 0x60710010); // Target torque
     wkc += drive_write32(slave, 0x1601, 5, 0x60b80010); // Touch Probe Function
+    wkc += drive_write32(slave, 0x1601, 6, 0x60810020); // Profile Velocity
 
-    wkc += drive_write8(slave, 0x1601, 0, 5); // 設定PDO映射中的映射數
+    wkc += drive_write8(slave, 0x1601, 0, 6); // 設定PDO映射中的映射數
 
     // 0x1602
     // ...
@@ -149,15 +150,12 @@ static int setupDelta_ASDA_I3_E(uint16 slave)
     wkc += drive_write8(slave, 0x1C12, 0, 1);
     wkc += drive_write8(slave, 0x1C13, 0, 1);
 
-
-    // ref: ASDA A2 5.3.3, ASDA A3 13.3.5        
+    // ref: ASDA A2 5.3.3, ASDA A3 13.3.5
     // 設定週期同步位置模式 0x8 CSP MODE
-    //wkc += drive_write8(slave, 0x6060, 0, 8);
+    // wkc += drive_write8(slave, 0x6060, 0, 8);
 
     // ref: ASDA A3 13.3.1 PP Mode
     wkc += drive_write8(slave, 0x6060, 0, 1);
-    wkc += drive_write32(slave, 0x6081, 0, 50 * 10000); //為PP mode寫一個初始速度
-
 
     if (wkc != excepted_wkc)
     {
