@@ -9,9 +9,15 @@
 
 typedef struct
 {
+    int64_t feedback_update_time_ns;
+    int64_t feedback_update_time_s;
     int32_t ActualPosition[6]; 
     int32_t ActualVelocity[6]; 
-    int16_t ActualTorque[6];   
+    int16_t ActualTorque[6];
+
+    int64_t control_update_time_ms;
+    char control_key;
+
 } Share_Memeber_t;
 
 static int inline createShareMem(key_t share_key)

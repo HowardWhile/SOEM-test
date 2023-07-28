@@ -5,7 +5,6 @@
 
 #include <termios.h> //keyboardPISOX中定义的标准接口
 
-#include "arc_ipc_tool.hpp"
 #include "arc_ec_tool.hpp"
 #include "arc_rt_tool.hpp"
 #include "arc_console.hpp"
@@ -18,7 +17,7 @@
 #define EC_TIMEOUTMON 500
 
 // Slave的站號
-#define ASDA_I3_E_AXIS_6 0
+#define ASDA_I3_E_AXIS_6 6
 
 // ----------------------------------------------------------------
 bool execExit = false; // 開始解建構程式
@@ -116,9 +115,9 @@ int servo_on_work()
 bool request_trigger = false;
 int servo_pp_trigger()
 {
-    //ref:
-    // ASDA-A3.pdf 13-62(p915)
-    // ASDA-A3.pdf (p880)
+    // ref:
+    //  ASDA-A3.pdf 13-62(p915)
+    //  ASDA-A3.pdf (p880)
     static int step = 0;
     switch (step)
     {
@@ -139,7 +138,7 @@ int servo_pp_trigger()
     case 3:
         if (status_word[12] == true) // 確認伺服收到命令訊號
         {
-            ctrl_word[4] = false;    // RST 觸發命令
+            ctrl_word[4] = false; // RST 觸發命令
             step++;
         }
         break;
@@ -175,7 +174,7 @@ int displayServoInfo(Delta_ASDA_I3_E_2nd_TxPDO_Mapping_t *TxPDO, Delta_ASDA_I3_E
     line_count++;
     console("position: [%f], %f, (%f)*****", (float)position / 10000, (float)RxPDO->TargetPosition / 10000, (float)TxPDO->ActualPosition / 10000);
     line_count++;
-    console("speed   : [%d], %d, (%d)*****", speed, RxPDO->TargetVelocity, TxPDO->ActualVelocity);
+    console("speed   : [%d], %d, (%d)*****", speed, RxPDO->ProfileVelocity, TxPDO->ActualVelocity);
     line_count++;
     console("torque  : %d, (%d)*****", RxPDO->TargetTorque, TxPDO->ActualTorque);
     line_count++;
@@ -190,7 +189,6 @@ int wkc = 0;
 int expected_wkc = 0;
 bool inOP = false;
 int currentgroup = 0;
-Share_Memeber_t* share_memeber = NULL;
 
 int checkSlaveConfig(void)
 {
@@ -481,22 +479,22 @@ void *bgKeyboardDoWork(void *arg)
             speed += 10;
             if (speed > 1000)
                 speed = 1000;
-            drive_write32(ASDA_I3_E_AXIS_6, 0x6081, 0, speed * 10000);
+            // drive_write32(ASDA_I3_E_AXIS_6, 0x6081, 0, speed * 10000);
             break;
         case 'd':
             speed = 0;
-            drive_write32(ASDA_I3_E_AXIS_6, 0x6081, 0, speed * 10000);
+            // drive_write32(ASDA_I3_E_AXIS_6, 0x6081, 0, speed * 10000);
             break;
         case 'c':
             speed -= 10;
             if (speed < 0)
                 speed = 0;
-            drive_write32(ASDA_I3_E_AXIS_6, 0x6081, 0, speed * 10000);
+            // drive_write32(ASDA_I3_E_AXIS_6, 0x6081, 0, speed * 10000);
             break;
         case '3':
-            
+
             break;
-            
+
         case ' ':
             request_trigger = true;
             break;
@@ -527,18 +525,6 @@ void *bgRealtimeDoWork(void *arg)
     {
         const int cycletime = PERIOD_NS;
         console("Starting RT task with dt=%u ns", cycletime);
-
-        // --------------------------------------
-        // 創建共享記憶體
-        // --------------------------------------
-        int shared_mem_id = createShareMem(1234);
-        if (shared_mem_id != -1)
-        {
-            if(attachShareMem(shared_mem_id, &share_memeber) == 0)
-            {
-                console("create share memrory..." LIGHT_GREEN "succeeded" RESET);
-            }
-        }
         // --------------------------------------
         // --------------------------------------
         // --------------------------------------
@@ -640,18 +626,18 @@ void *bgRealtimeDoWork(void *arg)
                             Delta_ASDA_I3_E_2nd_RxPDO_Mapping_t *optr;
                             optr = (Delta_ASDA_I3_E_2nd_RxPDO_Mapping_t *)ec_slave[ASDA_I3_E_AXIS_6].outputs;
 
+                            optr->TargetPosition = position;
+                            optr->ProfileVelocity = speed * 10000;
+
                             // int16 ControlWord = ctrl_word[16]
                             optr->ControlWord = 0;
                             for (int i = 0; i < 16; i++)
                                 optr->ControlWord |= (ctrl_word[i] ? 1 : 0) << i;
-
                             // EXEC_INTERVAL(50)
                             // {
                             //     printBinary16(optr->ControlWord);
                             // }
                             // EXEC_INTERVAL_END
-
-                            optr->TargetPosition = position;
                         }
 
                         ec_send_processdata();
@@ -670,24 +656,6 @@ void *bgRealtimeDoWork(void *arg)
                             line_count += displayRealTimeInfo();
                             line_count += displayServoInfo(iptr, optr);
 
-                            if (share_memeber != NULL)
-                            {
-                                for (int i = 0; i < 6; ++i)
-                                    console("ActualPosition[%d]: %d", i, share_memeber->ActualPosition[i]);                                    
-                                line_count += 6;
-
-                                // for (int idx = 0; idx < 6; idx++)
-                                // {
-                                //     share_memeber->ActualPosition[idx] += idx; //test
-                                // }
-                                share_memeber->ActualPosition[0] = 0;
-                                share_memeber->ActualPosition[1] = 0;
-                                share_memeber->ActualPosition[2] = -2025000;
-                                share_memeber->ActualPosition[3] = 2025000;
-                                share_memeber->ActualPosition[4] = -2025000;
-                                share_memeber->ActualPosition[5] = 0;
-                            }
-
                             MOVEUP(line_count);
                             line_count = 0;
                             needlf = true;
@@ -695,8 +663,6 @@ void *bgRealtimeDoWork(void *arg)
                             // debug hexdump
                             // dumpHex(ec_slave[ASDA_I3_E_AXIS_6].inputs, 32);
                             // dumpHex(ec_slave[ASDA_I3_E_AXIS_6].outputs, 32);
-      
-
                         }
                         EXEC_INTERVAL_END
                         // ---------------------------------------------------
@@ -726,13 +692,6 @@ void *bgRealtimeDoWork(void *arg)
         else
         {
             console("ec_init on [%s] " RED "Failed." RESET, EC_CH_NAME);
-        }
-
-        if (share_memeber != NULL)
-        {
-            // deinit share memory
-            detachShareMem(share_memeber);
-            removeShareMem(shared_mem_id);
         }
     }
     else
