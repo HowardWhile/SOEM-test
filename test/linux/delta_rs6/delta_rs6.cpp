@@ -245,17 +245,19 @@ void updateDynamicSpeed()
         speed = clamp64f(speed, 100, 1000 * 10000); // 限制最大最小速度
         dynamic_speed[idx] = speed;
     }
-
-    for (int axis_id = ASDA_I3_E_AXIS_1; axis_id <= ASDA_I3_E_AXIS_6; axis_id++)
-    {
-        drive_write32(axis_id, 0x6081, 0, dynamic_speed[axis_id - 1]);
-    }
 }
 
 void requsetTrigger()
 {
     if (enable_dynamic_speed == true)
         updateDynamicSpeed();
+    else
+    {
+        for (int idx = 0; idx < 6; idx++)
+        {
+            dynamic_speed[idx] = speed * 10000;
+        }
+    }
     request_trigger = true;
 }
 
@@ -357,6 +359,16 @@ int displayServoInfo()
     {
         console("speed   : [%d]*****", speed);
     }
+    line_count++;
+
+    consolex("ActualTorque: ");
+    for (int axis_idx = 0; axis_idx < 6; axis_idx++) //
+    {
+        printf(" %d:(%+8.2f)",
+               axis_idx,
+               (float)i_pdo[axis_idx]->ActualTorque);
+    }
+    printf("*****\n");
     line_count++;
 
     if (enable_loop_position)
@@ -745,32 +757,20 @@ void controlKey(char control_key)
 
     // 固定 speed
     case 'e':
+        enable_dynamic_speed = false;
         speed += 10;
         if (speed > 1000)
             speed = 1000;
-        for (int axis_id = ASDA_I3_E_AXIS_1; axis_id <= ASDA_I3_E_AXIS_6; axis_id++)
-        {
-            drive_write32(axis_id, 0x6081, 0, speed * 10000);
-        }
-        enable_dynamic_speed = false;
         break;
     case 'd':
         enable_dynamic_speed = false;
         speed = 10;
-        for (int axis_id = ASDA_I3_E_AXIS_1; axis_id <= ASDA_I3_E_AXIS_6; axis_id++)
-        {
-            drive_write32(axis_id, 0x6081, 0, speed * 10000);
-        }
         break;
     case 'c':
         enable_dynamic_speed = false;
         speed -= 10;
         if (speed < 0)
             speed = 0;
-        for (int axis_id = ASDA_I3_E_AXIS_1; axis_id <= ASDA_I3_E_AXIS_6; axis_id++)
-        {
-            drive_write32(axis_id, 0x6081, 0, speed * 10000);
-        }
         break;
 
     // 固定移動時間
@@ -831,7 +831,7 @@ void *bgKeyboardDoWork(void *arg)
             continue;
         }
 
-        controlKey(ch);        
+        controlKey(ch);
     }
 
     tcsetattr(0, TCSANOW, &stored_settings); // 還原設定
@@ -933,7 +933,7 @@ void *bgRealtimeDoWork(void *arg)
                                 // 從關節模組讀回來的feedback refresh
                                 actual_position[i] = iptr->ActualPosition;
                                 share_member->feedback_update_time_ns = time_now.tv_nsec;
-                                share_member->feedback_update_time_s = time_now.tv_sec;                                
+                                share_member->feedback_update_time_s = time_now.tv_sec;
                                 share_member->ActualPosition[i] = iptr->ActualPosition;
                                 share_member->ActualVelocity[i] = iptr->ActualVelocity;
                                 share_member->ActualTorque[i] = iptr->ActualTorque;
@@ -989,12 +989,14 @@ void *bgRealtimeDoWork(void *arg)
                             for (int axis_id = ASDA_I3_E_AXIS_1, axis_idx = 0; axis_id <= ASDA_I3_E_AXIS_6; axis_id++, axis_idx++)
                             {
                                 optr = (Delta_ASDA_I3_E_2nd_RxPDO_Mapping_t *)ec_slave[axis_id].outputs;
+
+                                optr->TargetPosition = position[axis_idx];
+                                optr->ProfileVelocity = dynamic_speed[axis_idx];
+
                                 // int16 ControlWord = ctrl_word[16]
                                 optr->ControlWord = 0;
                                 for (int i = 0; i < 16; i++)
                                     optr->ControlWord |= (ctrl_word[i] ? 1 : 0) << i;
-
-                                optr->TargetPosition = position[axis_idx];
                             }
 
                             // EXEC_INTERVAL(50)
@@ -1090,7 +1092,6 @@ int main()
     usleep(1000);
     pthread_create(&bg_rt, NULL, bgRealtimeDoWork, NULL); // RT執行序
 
-
     // ----------------------------------------------------------------
     // ----------------------------------------------------------------
     int step = 0;
@@ -1153,9 +1154,9 @@ int main()
         // 來自share memory的控制
         // ----------------------------------------------------------------
         if (share_member != NULL)
-        {    
+        {
             static int64_t check_time = 0;
-            if(check_time != share_member->control_update_time_ms)
+            if (check_time != share_member->control_update_time_ms)
             {
                 check_time = share_member->control_update_time_ms;
                 char key = share_member->control_key;
