@@ -104,6 +104,14 @@ int servo_on_work()
         ctrl_word[3] = true;
         ctrl_word[4] = false;
         break;
+    
+    case 6: // 與twincat一致打開bit4
+        ctrl_word[0] = true;
+        ctrl_word[1] = true;
+        ctrl_word[2] = true;
+        ctrl_word[3] = true;
+        ctrl_word[4] = true;
+        break;
 
     default:
         return 0;
@@ -167,14 +175,56 @@ int clamp(int number, int minValue, int maxValue)
 int position = 0;
 int speed = 0;
 
+// CSP debug information
+uint8 number_of_error = 0;            //  0x1003.0
+uint32 standard_error_field[5] = {0}; // 0x1003.1~0x1003.5
+uint32 error_code1 = -1;             // 0x2001
+uint32 error_code2 = -1;             // 0x603F
+uint32 cia_mode = -1;                // 0x6060
+uint32 max_profile_velocity = -1;    // 0x607F
+uint32 max_motor_speed = -1;         // 0x6080
+uint32 quick_stop_deceleration = -1; // 0x6085
+
 int displayServoInfo(Delta_ASDA_I3_E_2nd_TxPDO_Mapping_t *TxPDO, Delta_ASDA_I3_E_2nd_RxPDO_Mapping_t *RxPDO)
 {
     int line_count = 0;
-    console("ctrlword: 0x%X, (0x%X)*****", RxPDO->ControlWord, TxPDO->StatusWord);
+    // CSP debug information
+    // uint8 number_of_error = 0;            //  0x1003.0
+    // uint32 standard_error_field[5] = {0}; // 0x1003.1~0x1003.5
+    // uint32 error_code1 = -1;             // 0x2001
+    // uint32 error_code2 = -1;             // 0x603F
+    // uint32 cia_mode = -1;                // 0x6060
+    // uint32 max_profile_velocity = -1;    // 0x607F
+    // uint32 max_motor_speed = -1;         // 0x6080
+    // uint32 quick_stop_deceleration = -1; // 0x6085
+    console("0x1003.0: %d, number_of_error     ", number_of_error); line_count++;
+    console("0x1003.1~5: %d %d %d %d %d     ",
+            standard_error_field[0],
+            standard_error_field[1],
+            standard_error_field[2],
+            standard_error_field[3],
+            standard_error_field[4]); line_count++;    
+    console("0x2001: %d, error_code1     ", error_code1); line_count++;
+    console("0x603F: %d, error_code2     ", error_code2); line_count++;
+    console("0x6060: %d, CIA402 operation mode      ", cia_mode); line_count++;
+    console("0x607F: %d, max_profile_velocity     ", max_profile_velocity); line_count++;
+    console("0x6080: %d, max_motor_speed      ", max_motor_speed); line_count++;
+    console("0x6085: %d, quick_stop_deceleration      ", quick_stop_deceleration); line_count++;
+    
+
+    consolex("ctrlword: ");
+    printBinary16(RxPDO->ControlWord);
+    printf(" 0x%04X    \r\n", RxPDO->ControlWord);
     line_count++;
-    console("position: [%f], %f, (%f)*****", (float)position / 10000, (float)RxPDO->TargetPosition / 10000, (float)TxPDO->ActualPosition / 10000);
+
+    consolex("statword: ");
+    printBinary16(TxPDO->StatusWord);
+    printf(" 0x%04X    \r\n", TxPDO->StatusWord);
     line_count++;
-    console("speed   : [%d], %d, (%d)*****", speed, RxPDO->ProfileVelocity, TxPDO->ActualVelocity);
+
+    console("position: [%d], 0x607A: %d, 0x6064: %d*****", position, RxPDO->TargetPosition, TxPDO->ActualPosition);
+    line_count++;
+    console("speed   : [%d], 0x60FF: %d, 0x606C: %d*****", speed, RxPDO->TargetVelocity, TxPDO->ActualVelocity);
     line_count++;
     console("torque  : %d, (%d)*****", RxPDO->TargetTorque, TxPDO->ActualTorque);
     line_count++;
@@ -225,6 +275,9 @@ int checkSlaveConfig(void)
     // 配置 EtherCAT 主站的時基
     ec_configdc();
 
+    //ec_dcsync0(ASDA_I3_E_AXIS_6, TRUE, PERIOD_NS, 50000U);
+    //ec_dcsync01(ASDA_I3_E_AXIS_6, TRUE, PERIOD_NS, PERIOD_NS * 2, 50000U);
+
     // 切換 EtherCAT 主站至SAFE_OP模式
     if (ec_statecheck(0, EC_STATE_SAFE_OP, EC_TIMEOUTSTATE) != EC_STATE_SAFE_OP)
     {
@@ -232,6 +285,7 @@ int checkSlaveConfig(void)
         return -1;
     }
     console("Slaves mapped, state to SAFE_OP... " LIGHT_GREEN "succeeded" RESET);
+
 
     // Read slave states and list slave information
     ec_readstate();
@@ -243,7 +297,8 @@ int checkSlaveConfig(void)
         printf("  Output Size: %3d bits\n", ec_slave[i].Obits);
         printf("  Input Size: %3d bits\n", ec_slave[i].Ibits);
         printf("  State: %2d\n", ec_slave[i].state);
-        printf("  Delay: %d.%d\n", (int)ec_slave[i].pdelay, ec_slave[i].hasdc);
+        printf("  HasDC: %d\n", ec_slave[i].hasdc);
+        printf("  Delay: %d\n", (int)ec_slave[i].pdelay);
         // Add other slave information as needed
     }
 
@@ -465,13 +520,13 @@ void *bgKeyboardDoWork(void *arg)
 
         // position
         case 'w':
-            position = 100 * 10000;
+            position = position + 10;
             break;
         case 's':
             position = 0;
             break;
         case 'x':
-            position = -100 * 10000;
+            position = position - 10;
             break;
 
         // speed
@@ -496,7 +551,43 @@ void *bgKeyboardDoWork(void *arg)
             break;
 
         case ' ':
-            request_trigger = true;
+            // 設定dc同步模式
+            //drive_write32(ASDA_I3_E_AXIS_6, 0x1c32, 1, 2);
+            //drive_write32(ASDA_I3_E_AXIS_6, 0x1c33, 1, 2);
+
+            // CSP debug information
+            // uint8 number_of_error = 0;            //  0x1003.0
+            // uint32 standard_error_field[5] = {0}; // 0x1003.1~0x1003.5
+            // uint32 error_code1 = -1;             // 0x2001
+            // uint32 error_code2 = -1;             // 0x603F
+            // uint32 cia_mode = -1;                // 0x6060
+            // uint32 max_profile_velocity = -1;    // 0x607F
+            // uint32 max_motor_speed = -1;         // 0x6080
+            // uint32 quick_stop_deceleration = -1; // 0x6085
+
+            drive_read8(ASDA_I3_E_AXIS_6, 0x1003, 0, number_of_error);
+            for (int sub_idx = 1; sub_idx <= 5; sub_idx++)
+            {
+                if(sub_idx <= number_of_error)
+                {
+                    uint32 err_code;
+                    drive_read32(ASDA_I3_E_AXIS_6, 0x1003, sub_idx, err_code);
+                    standard_error_field[sub_idx - 1] = err_code;
+                }
+                else
+                {
+                    standard_error_field[sub_idx - 1] = 0;
+                }
+            }
+            
+
+            drive_read32(ASDA_I3_E_AXIS_6, 0x2001, 0, error_code1);
+            drive_read32(ASDA_I3_E_AXIS_6, 0x603F, 0, error_code2);
+            drive_read32(ASDA_I3_E_AXIS_6, 0x6060, 0, cia_mode);
+            drive_read32(ASDA_I3_E_AXIS_6, 0x607F, 0, max_profile_velocity);
+            drive_read32(ASDA_I3_E_AXIS_6, 0x6080, 0, max_motor_speed);
+            drive_read32(ASDA_I3_E_AXIS_6, 0x6085, 0, quick_stop_deceleration);
+
             break;
 
         default:
@@ -587,9 +678,9 @@ void *bgRealtimeDoWork(void *arg)
                         if (request_servo_on)
                         {
                             if (servo_on_work() == 0)
-                            {
                                 request_servo_on = false;
-                            }
+
+                            request_servo_on = false;
                         }
 
                         if (request_servo_off)
@@ -605,7 +696,7 @@ void *bgRealtimeDoWork(void *arg)
                         }
 
                         if (request_trigger)
-                        {
+                        {                            
                             if (status_word[2] == false) // 還沒有ServoOn
                                 request_trigger = false;
                             else
@@ -618,6 +709,7 @@ void *bgRealtimeDoWork(void *arg)
                             }
                         }
 
+
                         // -------------------------------------
                         // update outputs
                         // -------------------------------------
@@ -627,7 +719,8 @@ void *bgRealtimeDoWork(void *arg)
                             optr = (Delta_ASDA_I3_E_2nd_RxPDO_Mapping_t *)ec_slave[ASDA_I3_E_AXIS_6].outputs;
 
                             optr->TargetPosition = position;
-                            optr->ProfileVelocity = speed * 10000;
+                            optr->TargetVelocity = speed;
+                            //optr->ProfileVelocity = speed * 10000;
 
                             // int16 ControlWord = ctrl_word[16]
                             optr->ControlWord = 0;

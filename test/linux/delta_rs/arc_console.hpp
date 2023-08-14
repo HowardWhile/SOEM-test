@@ -115,6 +115,11 @@ char *clock_now()
         PRINT_FUNCTION(__VA_ARGS__);                                      \
         PRINT_FUNCTION("\r\n");                                           \
     }
+#define consolex(...)                                                     \
+    {                                                                     \
+        PRINT_FUNCTION("[" TIMESTAMP_FORMATE "] ", TIMESTAMP_FUNCTION()); \
+        PRINT_FUNCTION(__VA_ARGS__);                                      \
+    }
 #define consoler(...)                                                       \
     {                                                                       \
         PRINT_FUNCTION("\r[" TIMESTAMP_FORMATE "] ", TIMESTAMP_FUNCTION()); \
@@ -187,15 +192,13 @@ char *clock_now()
 
 static inline void printBinary16(int16_t num)
 {
-    PRINT_FUNCTION("[" TIMESTAMP_FORMATE "] ", TIMESTAMP_FUNCTION());
-
     for (int i = 15; i >= 0; i--)
     {
         PRINT_FUNCTION("%d", (num >> i) & 1);
         if (i % 4 == 0)
             PRINT_FUNCTION(" ");
     }
-    PRINT_FUNCTION("b\r\n");
+    PRINT_FUNCTION("b");
 }
 
 static void dumpHex(const void *data, size_t size)
